@@ -4,7 +4,8 @@ import com.sashkomusic.downloadagent.domain.model.DownloadOption;
 
 import java.util.List;
 
-public record SearchResultDto(
+public record SearchFilesResultDto(
         long chatId,
+        String releaseId,
         List<DownloadOption> results) {
 }

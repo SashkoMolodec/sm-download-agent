@@ -19,8 +19,5 @@ public record DownloadOption(
             Integer sampleRate, // Може бути null
             int lengthSeconds   // Тривалість
     ) {
-        public int getSizeMB() {
-            return (int) (size / (1024.0 * 1024.0));
-        }
     }
 }

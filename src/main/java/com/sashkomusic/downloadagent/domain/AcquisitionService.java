@@ -1,7 +1,7 @@
 package com.sashkomusic.downloadagent.domain;
 
 import com.sashkomusic.downloadagent.domain.model.DownloadOption;
-import com.sashkomusic.downloadagent.messaging.consumer.SearchRequestDto;
+import com.sashkomusic.downloadagent.messaging.consumer.SearchFilesTaskDto;
 import com.sashkomusic.downloadagent.messaging.producer.SearchResultProducer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -15,12 +15,12 @@ public class AcquisitionService {
     private final SearchPort searchPort;
     private final SearchResultProducer searchResultProducer;
 
-    public void search(SearchRequestDto task) {
+    public void search(SearchFilesTaskDto task) {
         String artist = task.artist();
         String title = task.title();
 
         List<DownloadOption> result = searchPort.search(artist, title);
-        searchResultProducer.sendResults(task.chatId(), result);
+        searchResultProducer.sendResults(task.chatId(), task.releaseId(), result);
     }
 }
 

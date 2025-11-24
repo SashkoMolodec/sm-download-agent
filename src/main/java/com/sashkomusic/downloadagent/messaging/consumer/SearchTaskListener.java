@@ -12,7 +12,7 @@ public class SearchTaskListener {
     private final AcquisitionService acquisitionService;
 
     @KafkaListener(topics = "files-search-tasks")
-    public void handleSearchTask(SearchRequestDto task) {
+    public void handleSearchTask(SearchFilesTaskDto task) {
         acquisitionService.search(task);
     }
 }

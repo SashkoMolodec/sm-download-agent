@@ -15,12 +15,12 @@ public class SearchResultProducer {
 
     public static final String RESULT_TOPIC = "file-search-results";
 
-    private final KafkaTemplate<String, SearchResultDto> kafkaTemplate;
+    private final KafkaTemplate<String, SearchFilesResultDto> kafkaTemplate;
 
-    public void sendResults(long chatId, List<DownloadOption> results) {
+    public void sendResults(long chatId, String releaseId, List<DownloadOption> results) {
         log.info("Sending {} results back to chat {}", results.size(), chatId);
 
-        SearchResultDto dto = new SearchResultDto(chatId, results);
+        SearchFilesResultDto dto = new SearchFilesResultDto(chatId, releaseId, results);
 
         kafkaTemplate.send(RESULT_TOPIC, dto);
     }

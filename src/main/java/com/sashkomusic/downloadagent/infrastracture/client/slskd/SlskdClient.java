@@ -2,14 +2,12 @@ package com.sashkomusic.downloadagent.infrastracture.client.slskd;
 
 import com.sashkomusic.downloadagent.domain.SearchPort;
 import com.sashkomusic.downloadagent.domain.model.DownloadOption;
-import com.sashkomusic.downloadagent.exception.SearchNotCompleteException;
-import com.sashkomusic.downloadagent.infrastracture.client.slskd.dto.SlskdSearchEventResponse;
 import com.sashkomusic.downloadagent.infrastracture.client.slskd.dto.SlskdSearchEntryResponse;
+import com.sashkomusic.downloadagent.infrastracture.client.slskd.dto.SlskdSearchEventResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
-import org.springframework.retry.support.RetryTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
@@ -23,49 +21,35 @@ import java.util.stream.Collectors;
 @Slf4j
 public class SlskdClient implements SearchPort {
 
+    private static final long POLL_TIMEOUT_MS = 12_000;
+    private static final long POLL_INTERVAL_MS = 3_000;
+    private static final long STABILIZATION_DELAY_MS = 5000;
+
     private final RestClient client;
     private final String apiKey;
-    private final RetryTemplate retryTemplate;
 
     public SlskdClient(RestClient.Builder builder,
                        @Value("${slskd.api-key:}") String apiKey) {
         this.client = builder.baseUrl("http://localhost:5030").build();
         this.apiKey = apiKey;
-        this.retryTemplate = RetryTemplate.builder()
-                .maxAttempts(20)
-                .fixedBackoff(3000)
-                .retryOn(SearchNotCompleteException.class)
-                .build();
     }
 
     @Override
     public List<DownloadOption> search(String artist, String release) {
         var query = artist + " " + release;
-
         var searchId = initiateSearchRequest(query);
-        List<SlskdSearchEntryResponse> response = retryTemplate.execute(
-                context -> pollSearchResultsUntilComplete(searchId), context -> {
-                    log.warn("Search polling timeout after max attempts, returning empty. SearchId: {}, Query: '{}'", searchId, query);
-                    return List.of();
-                });
 
-        return toDomain(response);
-    }
+        waitForSearchToComplete(searchId);
+        waitToStabilize();
 
-    private List<DownloadOption> toDomain(List<SlskdSearchEntryResponse> response) {
-        return response.stream()
-                .filter(r -> r.files() != null && !r.files().isEmpty())
-                .filter(r -> r.lockedFileCount() == 0)
-                .filter(SlskdSearchEntryResponse::canDownload)
-                .map(SlskdClient::mapOption)
-                .toList();
+        return getSearchResults(searchId);
     }
 
     private UUID initiateSearchRequest(String query) {
         Map<String, Object> searchRequest = Map.of(
                 "searchText", query,
-                "searchTimeout", 15000,
-                "responseLimit", 100,
+                "searchTimeout", (int) POLL_TIMEOUT_MS,
+                "responseLimit", 300,
                 "filterResponses", true,
                 "minimumResponseFileCount", 1,
                 "minimumPeerUploadSpeed", 0
@@ -79,36 +63,86 @@ public class SlskdClient implements SearchPort {
                 .retrieve()
                 .body(SlskdSearchEventResponse.class);
 
-        log.info("Search initiated successfully: '{}' (ID: {})", query, response.getId());
+        if (response == null || response.getId() == null) {
+            throw new RuntimeException("Failed to initiate search for query: " + query);
+        }
+
+        log.info("Search initiated: '{}' (ID: {})", query, response.getId());
         return response.getId();
     }
 
-    private List<SlskdSearchEntryResponse> pollSearchResultsUntilComplete(UUID searchId) {
-        log.info("Polling search status: searchId={}", searchId);
+    private void waitForSearchToComplete(UUID searchId) {
+        long endTime = System.currentTimeMillis() + POLL_TIMEOUT_MS;
 
-        SlskdSearchEventResponse status = client.get()
+        while (System.currentTimeMillis() < endTime) {
+            try {
+                var status = getSearchStatus(searchId);
+                log.info("Status: searchId={}, state={}, isComplete={}, fileCount={}",
+                        searchId, status.getState(), status.getIsComplete(), status.getFileCount());
+
+                if (Boolean.TRUE.equals(status.getIsComplete())) {
+                    return;
+                }
+
+                Thread.sleep(POLL_INTERVAL_MS);
+
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Search interrupted", e);
+            } catch (Exception e) {
+                log.warn("Error polling status, retrying in next tick: {}", e.getMessage());
+            }
+        }
+        log.warn("Search polling timed out locally for ID: {}. Returning accumulated results.", searchId);
+    }
+
+    private static void waitToStabilize() {
+        try {
+            log.debug("Waiting {}ms for results to stabilize...", STABILIZATION_DELAY_MS);
+            Thread.sleep(STABILIZATION_DELAY_MS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private SlskdSearchEventResponse getSearchStatus(UUID searchId) {
+        return client.get()
                 .uri("/api/v0/searches/{id}", searchId)
                 .header("X-API-KEY", apiKey)
                 .retrieve()
                 .body(SlskdSearchEventResponse.class);
+    }
 
-        log.info("Status: searchId={}, state={}, isComplete={}, fileCount={}",
-                searchId, status.getState(), status.getIsComplete(), status.getFileCount());
-
-        if (Boolean.FALSE.equals(status.getIsComplete())) {
-            throw new SearchNotCompleteException("Search still in progress");
-        }
-
-        return client.get()
-                .uri("/api/v0/searches/{id}/responses", searchId)
+    private List<DownloadOption> getSearchResults(UUID searchId) {
+        List<SlskdSearchEntryResponse> responses = client.get()
+                .uri("/api/v0/searches/{id}/responses", searchId.toString())
                 .header("X-API-KEY", apiKey)
                 .retrieve()
                 .body(new ParameterizedTypeReference<>() {
                 });
+
+        return toDomain(responses);
+    }
+
+    private List<DownloadOption> toDomain(List<SlskdSearchEntryResponse> response) {
+        if (response == null) return List.of();
+
+        return response.stream()
+                .filter(r -> r.files() != null && !r.files().isEmpty())
+                .filter(r -> r.lockedFileCount() == 0)
+                .filter(SlskdSearchEntryResponse::canDownload)
+                .map(SlskdClient::mapOption)
+                .toList();
     }
 
     private static DownloadOption mapOption(SlskdSearchEntryResponse r) {
-        var fileItems = r.files().stream().map(SlskdClient::mapFileItem).collect(Collectors.toList());
+        var fileItems = r.files().stream()
+                .map(SlskdClient::mapFileItem)
+                .collect(Collectors.toList());
+
+        Map<String, String> metadata = new HashMap<>();
+        metadata.put("username", r.username());
+        metadata.put("token", String.valueOf(r.token()));
 
         return new DownloadOption(
                 UUID.randomUUID().toString(),
@@ -116,18 +150,18 @@ public class SlskdClient implements SearchPort {
                 r.username(),
                 r.getTotalSizeMB(),
                 fileItems,
-                new HashMap<>()
+                metadata
         );
     }
 
     private static DownloadOption.FileItem mapFileItem(SlskdSearchEntryResponse.SoulseekFile f) {
         return new DownloadOption.FileItem(
-                f.filename(),
-                f.getSizeMB(),
-                f.bitRate(),                // null, якщо це FLAC/WAV
-                f.bitDepth(),               // null, якщо це MP3
-                f.sampleRate(),             // null, якщо це MP3
-                f.length() != null ? f.length() : 0 // Тривалість у секундах (null check)
+                f.getFileName(),
+                f.getSizeMB(), // Переконайся, що в Domain теж double/long співпадають
+                f.bitRate(),
+                f.bitDepth(),
+                f.sampleRate(),
+                f.length() != null ? f.length() : 0
         );
     }
 }

@@ -216,7 +216,7 @@ public record SlskdSearchEntryResponse(
      * Check if user has free upload slot
      */
     public boolean canDownload() {
-        return hasFreeUploadSlot && queueLength < 100;
+        return hasFreeUploadSlot;
     }
 
     /**
