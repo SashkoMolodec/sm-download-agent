@@ -1,0 +1,83 @@
+### SLSKD API Testing
+
+@apiKey = ApzMmT1nlhMzLEqLjTT36RJZwu94/JnnztXL+RSX6oj1+LfmGNXuiF511efGUkpi
+@baseUrl = http://localhost:5030
+
+### Health check
+GET {{baseUrl}}/health
+
+### Get application info
+GET {{baseUrl}}/api/v0/application
+X-API-KEY: {{apiKey}}
+
+###
+### SEARCH WORKFLOW
+###
+
+### 1. Initiate search
+POST {{baseUrl}}/api/v0/searches
+X-API-KEY: {{apiKey}}
+Content-Type: application/json
+
+{
+  "searchText": "nthng hypnotherapy",
+  "filterResponses": true,
+  "maximumPeerQueueLength": 1000000,
+  "minimumPeerUploadSpeed": 0,
+  "minimumResponseFileCount": 1,
+  "responseLimit": 100,
+  "searchTimeout": 15000
+}
+
+### 2. Get search status (replace with actual search ID)
+GET {{baseUrl}}/api/v0/searches/a9e2e91a-6fdb-4115-a741-a138c9126854
+X-API-KEY: {{apiKey}}
+
+### 3. Get search results (replace with actual search ID)
+GET {{baseUrl}}/api/v0/searches/a9e2e91a-6fdb-4115-a741-a138c9126854/responses
+X-API-KEY: {{apiKey}}
+
+###
+### DOWNLOAD WORKFLOW
+###
+
+### Get current downloads
+GET {{baseUrl}}/api/v0/transfers/downloads
+X-API-KEY: {{apiKey}}
+
+### Download files from a user
+# SLSKD expects this structure for downloads
+POST {{baseUrl}}/api/v0/transfers/downloads/csurys
+X-API-KEY: {{apiKey}}
+Content-Type: application/json
+
+[
+  {
+    "filename": "@@bhfrv\\Tracks\\12-18-23\\Nthng - Hypnotherapy - 02A.flac",
+    "size": 56281192
+  }
+]
+
+### Get downloads for specific user
+GET {{baseUrl}}/api/v0/transfers/downloads?username=csurys
+X-API-KEY: {{apiKey}}
+
+### Get specific download details
+GET {{baseUrl}}/api/v0/transfers/downloads/USERNAME/FILENAME
+X-API-KEY: {{apiKey}}
+
+### Cancel download
+DELETE {{baseUrl}}/api/v0/transfers/downloads/USERNAME/FILENAME
+X-API-KEY: {{apiKey}}
+
+
+###
+
+### Тестування вебхука (Emulate Event)
+# Ми відправляємо POST на /api/v0/events/{назва_події}
+# Тіло запиту - це просто рядок-ідентифікатор (disambiguator), щоб події не дублювались.
+POST {{baseUrl}}/api/v0/events/downloadfilecomplete
+Content-Type: application/json
+X-API-Key: {{apiKey}}
+
+"test-event-id-001"
