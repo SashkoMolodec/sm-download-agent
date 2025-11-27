@@ -8,6 +8,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+
 @Service
 @Slf4j
 @RequiredArgsConstructor
@@ -19,13 +21,15 @@ public class DownloadService {
 
     public void download(DownloadFilesTaskDto task) {
         try {
-            // Register all files with chatId so webhook can find them later
-            task.downloadOption().files().forEach(file ->
-                    downloadContext.registerDownload(file.filename(), task.chatId())
-            );
+            List<String> filenames = task.downloadOption().files().stream()
+                    .map(file -> file.filename())
+                    .toList();
+
+            downloadContext.registerBatch(task.chatId(), task.releaseId(), filenames);
 
             String downloadId = musicSourcePort.initiateDownload(task.downloadOption());
-            log.info("Download initiated: downloadId={}, files={}", downloadId, task.downloadOption().files().size());
+            log.info("Download initiated: downloadId={}, releaseId={}, files={}",
+                    downloadId, task.releaseId(), filenames.size());
 
         } catch (MusicDownloadException e) {
             log.error("Download failed for chatId={}: {}", task.chatId(), e.getMessage());

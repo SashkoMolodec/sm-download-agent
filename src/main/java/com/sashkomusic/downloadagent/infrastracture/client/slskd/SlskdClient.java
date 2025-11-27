@@ -23,9 +23,9 @@ import java.util.stream.Collectors;
 @Slf4j
 public class SlskdClient implements MusicSourcePort {
 
-    private static final long POLL_TIMEOUT_MS = 12_000;
+    private static final long POLL_TIMEOUT_MS = 20_000;
     private static final long POLL_INTERVAL_MS = 3_000;
-    private static final long STABILIZATION_DELAY_MS = 5000;
+    private static final long STABILIZATION_DELAY_MS = 10_000;
 
     private final RestClient client;
     private final String apiKey;
@@ -51,7 +51,7 @@ public class SlskdClient implements MusicSourcePort {
         Map<String, Object> searchRequest = Map.of(
                 "searchText", query,
                 "searchTimeout", (int) POLL_TIMEOUT_MS,
-                "responseLimit", 300,
+                "responseLimit", 70,
                 "filterResponses", true,
                 "minimumResponseFileCount", 1,
                 "minimumPeerUploadSpeed", 0

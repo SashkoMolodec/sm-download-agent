@@ -1,26 +1,74 @@
 package com.sashkomusic.downloadagent.domain;
 
+import com.sashkomusic.downloadagent.domain.model.DownloadBatch;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 @Slf4j
 public class DownloadContext {
 
-    private final ConcurrentHashMap<String, Long> filenameToChatId = new ConcurrentHashMap<>();
+    // directoryPath -> DownloadBatch
+    private final ConcurrentHashMap<String, DownloadBatch> batches = new ConcurrentHashMap<>();
 
-    public void registerDownload(String filename, long chatId) {
-        log.debug("Registering download: filename={}, chatId={}", filename, chatId);
-        filenameToChatId.put(filename, chatId);
+    public void registerBatch(long chatId, String releaseId, List<String> filenames) {
+        if (filenames.isEmpty()) {
+            log.warn("Attempted to register empty batch for chatId={}, releaseId={}", chatId, releaseId);
+            return;
+        }
+
+        String directoryPath = extractDirectory(filenames.getFirst());
+
+        DownloadBatch batch = new DownloadBatch(chatId, releaseId, directoryPath, filenames);
+        batches.put(directoryPath, batch);
+
+        log.info("Registered download batch: releaseId={}, directory={}, files={}",
+                releaseId, directoryPath, filenames.size());
     }
 
-    public Long getChatIdForFile(String filename) {
-        return filenameToChatId.get(filename);
+    public DownloadBatch markFileCompleted(String remoteFilename) {
+        String directory = extractDirectory(remoteFilename);
+        DownloadBatch batch = batches.get(directory);
+
+        if (batch == null) {
+            log.warn("No batch found for file: {} (directory: {})", remoteFilename, directory);
+            return null;
+        }
+
+        //String filename = extractFilename(remoteFilename);
+        batch.markFileCompleted(remoteFilename);
+
+        if (batch.isComplete()) {
+            batches.remove(directory);
+            log.info("Download batch completed: releaseId={}, directory={}",
+                    batch.getReleaseId(), directory);
+        }
+
+        return batch;
     }
 
-    public void clearDownload(String filename) {
-        filenameToChatId.remove(filename);
+    private String extractDirectory(String path) {
+        if (path == null) {
+            return "";
+        }
+        int lastSlash = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'));
+        if (lastSlash > 0) {
+            return path.substring(0, lastSlash);
+        }
+        return "";
+    }
+
+    private String extractFilename(String path) {
+        if (path == null) {
+            return "";
+        }
+        int lastSlash = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'));
+        if (lastSlash >= 0 && lastSlash < path.length() - 1) {
+            return path.substring(lastSlash + 1);
+        }
+        return path;
     }
 }

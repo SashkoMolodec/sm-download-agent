@@ -1,9 +1,11 @@
 package com.sashkomusic.downloadagent.api.webhook;
 
 import com.sashkomusic.downloadagent.api.webhook.dto.SlskdDownloadCompleteWebhook;
+import com.sashkomusic.downloadagent.domain.model.DownloadBatch;
 import com.sashkomusic.downloadagent.domain.DownloadContext;
+import com.sashkomusic.downloadagent.messaging.producer.dto.DownloadBatchCompleteDto;
 import com.sashkomusic.downloadagent.messaging.producer.dto.DownloadCompleteDto;
-import com.sashkomusic.downloadagent.messaging.producer.dto.DownloadErrorDto;
+import com.sashkomusic.downloadagent.messaging.producer.DownloadBatchCompleteProducer;
 import com.sashkomusic.downloadagent.messaging.producer.DownloadCompleteProducer;
 import com.sashkomusic.downloadagent.messaging.producer.DownloadErrorProducer;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class SlskdWebhookController {
 
     private final DownloadCompleteProducer downloadCompleteProducer;
+    private final DownloadBatchCompleteProducer batchCompleteProducer;
     private final DownloadErrorProducer errorProducer;
     private final DownloadContext downloadContext;
 
@@ -38,24 +41,31 @@ public class SlskdWebhookController {
             return ResponseEntity.ok().build();
         }
 
-        Long chatId = downloadContext.getChatIdForFile(webhook.remoteFilename());
-        if (chatId == null) {
-            log.warn("No chatId found for file: {}", webhook.remoteFilename());
-            return ResponseEntity.ok().build();
-        }
-
         try {
-            var dto = DownloadCompleteDto.of(chatId, webhook.remoteFilename(), webhook.transfer().size());
-            downloadCompleteProducer.sendComplete(dto);
-            downloadContext.clearDownload(webhook.remoteFilename());
-            
+            DownloadBatch batch = downloadContext.markFileCompleted(webhook.remoteFilename());
+
+            if (batch == null) {
+                log.debug("No batch found for file: {} (possibly external download)", webhook.remoteFilename());
+                return ResponseEntity.ok().build();
+            }
+
+            var fileDto = DownloadCompleteDto.of(batch.getChatId(), webhook.remoteFilename(), webhook.transfer().size());
+            downloadCompleteProducer.sendComplete(fileDto);
+
+            if (batch.isComplete()) {
+                log.info("All files downloaded for release: {}", batch.getReleaseId());
+                var batchDto = DownloadBatchCompleteDto.of(
+                        batch.getChatId(),
+                        batch.getReleaseId(),
+                        batch.getDirectoryPath(),
+                        batch.getAllFiles()
+                );
+                batchCompleteProducer.sendBatchComplete(batchDto);
+            }
+
         } catch (Exception e) {
-            log.error("Failed to process download complete webhook for chatId={}, file={}: {}",
-                    chatId, webhook.remoteFilename(), e.getMessage(), e);
-            errorProducer.sendError(DownloadErrorDto.of(
-                    chatId,
-                    "шось не ладні при обробці завершення скачування... " + extractFileName(webhook.remoteFilename())
-            ));
+            log.error("Failed to process download complete webhook for file={}: {}",
+                    webhook.remoteFilename(), e.getMessage(), e);
         }
 
         return ResponseEntity.ok().build();
