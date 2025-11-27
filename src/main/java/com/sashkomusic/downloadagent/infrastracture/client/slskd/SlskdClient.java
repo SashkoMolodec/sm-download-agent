@@ -1,7 +1,9 @@
 package com.sashkomusic.downloadagent.infrastracture.client.slskd;
 
-import com.sashkomusic.downloadagent.domain.SearchPort;
+import com.sashkomusic.downloadagent.domain.MusicSourcePort;
+import com.sashkomusic.downloadagent.domain.exception.MusicDownloadException;
 import com.sashkomusic.downloadagent.domain.model.DownloadOption;
+import com.sashkomusic.downloadagent.infrastracture.client.slskd.dto.SlskdDownloadResponse;
 import com.sashkomusic.downloadagent.infrastracture.client.slskd.dto.SlskdSearchEntryResponse;
 import com.sashkomusic.downloadagent.infrastracture.client.slskd.dto.SlskdSearchEventResponse;
 import lombok.extern.slf4j.Slf4j;
@@ -19,7 +21,7 @@ import java.util.stream.Collectors;
 
 @Service
 @Slf4j
-public class SlskdClient implements SearchPort {
+public class SlskdClient implements MusicSourcePort {
 
     private static final long POLL_TIMEOUT_MS = 12_000;
     private static final long POLL_INTERVAL_MS = 3_000;
@@ -142,7 +144,6 @@ public class SlskdClient implements SearchPort {
 
         Map<String, String> metadata = new HashMap<>();
         metadata.put("username", r.username());
-        metadata.put("token", String.valueOf(r.token()));
 
         return new DownloadOption(
                 UUID.randomUUID().toString(),
@@ -156,12 +157,62 @@ public class SlskdClient implements SearchPort {
 
     private static DownloadOption.FileItem mapFileItem(SlskdSearchEntryResponse.SoulseekFile f) {
         return new DownloadOption.FileItem(
-                f.getFileName(),
-                f.getSizeMB(), // Переконайся, що в Domain теж double/long співпадають
+                f.filename(),
+                f.size(),
                 f.bitRate(),
                 f.bitDepth(),
                 f.sampleRate(),
                 f.length() != null ? f.length() : 0
         );
+    }
+
+    @Override
+    public String initiateDownload(DownloadOption option) {
+        String username = option.technicalMetadata().get("username");
+
+        if (username == null) {
+            log.error("Missing required metadata: username is null");
+            throw new MusicDownloadException("трохи даних бракує для запиту шоби скачати музло");
+        }
+
+        log.info("Starting download from user={}, files={}", username, option.files().size());
+
+        List<Map<String, Object>> files = option.files().stream()
+                .map(f -> Map.<String, Object>of(
+                        "filename", f.filename(),
+                        "size", f.size()
+                ))
+                .toList();
+
+        log.info("Initiating download from user={}, files count={}", username, files.size());
+        files.forEach(f -> log.debug("  - {}", f.get("filename")));
+
+        try {
+            var response = client.post()
+                    .uri("/api/v0/transfers/downloads/{username}", username)
+                    .header("X-API-KEY", apiKey)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(files)
+                    .retrieve()
+                    .body(SlskdDownloadResponse.class);
+
+            if (response == null || response.enqueued() == null || response.enqueued().isEmpty()) {
+                log.warn("No files were enqueued for download from username={}", username);
+                throw new MusicDownloadException("ніц не виходе скачати...");
+            }
+
+            log.info("Download initiated for username={}, enqueued {} files",
+                    username, response.enqueued().size());
+
+            String batchId = response.enqueued().getFirst().id();
+            log.info("Batch ID: {}", batchId);
+
+            return batchId;
+        } catch (MusicDownloadException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Failed to initiate download for username={}: {}", username, e.getMessage());
+            throw new MusicDownloadException("не вийшло розпочати скачування: " + e.getMessage(), e);
+        }
     }
 }

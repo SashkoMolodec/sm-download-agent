@@ -1,6 +1,7 @@
 package com.sashkomusic.downloadagent.messaging.producer;
 
 import com.sashkomusic.downloadagent.domain.model.DownloadOption;
+import com.sashkomusic.downloadagent.messaging.producer.dto.SearchFilesResultDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.core.KafkaTemplate;

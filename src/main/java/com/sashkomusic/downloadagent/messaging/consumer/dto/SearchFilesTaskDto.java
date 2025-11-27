@@ -1,4 +1,4 @@
-package com.sashkomusic.downloadagent.messaging.consumer;
+package com.sashkomusic.downloadagent.messaging.consumer.dto;
 
 public record SearchFilesTaskDto(
         long chatId,
