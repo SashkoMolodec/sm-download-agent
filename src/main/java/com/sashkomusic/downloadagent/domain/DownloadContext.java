@@ -38,7 +38,6 @@ public class DownloadContext {
             return null;
         }
 
-        //String filename = extractFilename(remoteFilename);
         batch.markFileCompleted(remoteFilename);
 
         if (batch.isComplete()) {
@@ -59,16 +58,5 @@ public class DownloadContext {
             return path.substring(0, lastSlash);
         }
         return "";
-    }
-
-    private String extractFilename(String path) {
-        if (path == null) {
-            return "";
-        }
-        int lastSlash = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'));
-        if (lastSlash >= 0 && lastSlash < path.length() - 1) {
-            return path.substring(lastSlash + 1);
-        }
-        return path;
     }
 }
