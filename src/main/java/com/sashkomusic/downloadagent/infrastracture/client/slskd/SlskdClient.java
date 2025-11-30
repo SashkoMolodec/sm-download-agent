@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Service
 @Slf4j
@@ -41,8 +42,10 @@ public class SlskdClient implements MusicSourcePort {
         var query = artist + " " + release;
         var searchId = initiateSearchRequest(query);
 
-        waitForSearchToComplete(searchId);
-        waitToStabilize();
+        int fileCount = waitForSearchToComplete(searchId);
+
+
+        waitToStabilize(fileCount);
 
         return getSearchResults(searchId);
     }
@@ -73,17 +76,19 @@ public class SlskdClient implements MusicSourcePort {
         return response.getId();
     }
 
-    private void waitForSearchToComplete(UUID searchId) {
+    private int waitForSearchToComplete(UUID searchId) {
         long endTime = System.currentTimeMillis() + POLL_TIMEOUT_MS;
+        SlskdSearchEventResponse lastStatus = null;
 
         while (System.currentTimeMillis() < endTime) {
             try {
                 var status = getSearchStatus(searchId);
+                lastStatus = status;
                 log.info("Status: searchId={}, state={}, isComplete={}, fileCount={}",
                         searchId, status.getState(), status.getIsComplete(), status.getFileCount());
 
                 if (Boolean.TRUE.equals(status.getIsComplete())) {
-                    return;
+                    return status.getFileCount() != null ? status.getFileCount() : 0;
                 }
 
                 Thread.sleep(POLL_INTERVAL_MS);
@@ -96,14 +101,19 @@ public class SlskdClient implements MusicSourcePort {
             }
         }
         log.warn("Search polling timed out locally for ID: {}. Returning accumulated results.", searchId);
+        return lastStatus != null && lastStatus.getFileCount() != null ? lastStatus.getFileCount() : 0;
     }
 
-    private static void waitToStabilize() {
-        try {
-            log.debug("Waiting {}ms for results to stabilize...", STABILIZATION_DELAY_MS);
-            Thread.sleep(STABILIZATION_DELAY_MS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+    private static void waitToStabilize(int fileCount) {
+        if (fileCount > 0) {
+            try {
+                log.debug("Waiting {}ms for results to stabilize...", STABILIZATION_DELAY_MS);
+                Thread.sleep(STABILIZATION_DELAY_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        } else {
+            log.info("No files found, skipping stabilization wait");
         }
     }
 
@@ -133,23 +143,46 @@ public class SlskdClient implements MusicSourcePort {
                 .filter(r -> r.files() != null && !r.files().isEmpty())
                 .filter(r -> r.lockedFileCount() == 0)
                 .filter(SlskdSearchEntryResponse::canDownload)
-                .map(SlskdClient::mapOption)
+                .flatMap(this::splitByAlbumFolder)
                 .toList();
     }
 
-    private static DownloadOption mapOption(SlskdSearchEntryResponse r) {
-        var fileItems = r.files().stream()
+    private Stream<DownloadOption> splitByAlbumFolder(SlskdSearchEntryResponse response) {
+        Map<String, List<SlskdSearchEntryResponse.SoulseekFile>> groupedByFolder = response.files().stream()
+                .collect(Collectors.groupingBy(f -> extractAlbumFolder(f.filename())));
+
+        return groupedByFolder.entrySet().stream()
+                .map(entry -> {
+                    String albumFolder = entry.getKey();
+                    List<SlskdSearchEntryResponse.SoulseekFile> filesInFolder = entry.getValue();
+
+                    double totalSizeMB = filesInFolder.stream()
+                            .mapToLong(SlskdSearchEntryResponse.SoulseekFile::size)
+                            .sum() / (1024.0 * 1024.0);
+
+                    return mapOption(response, albumFolder, filesInFolder, totalSizeMB);
+                });
+    }
+
+    private static DownloadOption mapOption(
+            SlskdSearchEntryResponse response,
+            String albumFolder,
+            List<SlskdSearchEntryResponse.SoulseekFile> files,
+            double totalSizeMB) {
+
+        var fileItems = files.stream()
                 .map(SlskdClient::mapFileItem)
                 .collect(Collectors.toList());
 
         Map<String, String> metadata = new HashMap<>();
-        metadata.put("username", r.username());
+        metadata.put("username", response.username());
+        metadata.put("albumFolder", albumFolder);
 
         return new DownloadOption(
                 UUID.randomUUID().toString(),
                 "soulseek",
-                r.username(),
-                r.getTotalSizeMB(),
+                response.username() + " - " + albumFolder,
+                (int) totalSizeMB,
                 fileItems,
                 metadata
         );
@@ -164,6 +197,22 @@ public class SlskdClient implements MusicSourcePort {
                 f.sampleRate(),
                 f.length() != null ? f.length() : 0
         );
+    }
+
+    private static String extractAlbumFolder(String filePath) {
+        if (filePath == null || filePath.isEmpty()) {
+            return "Unknown Album";
+        }
+
+        String normalized = filePath.replace("/", "\\");
+        String[] parts = normalized.split("\\\\");
+        if (parts.length >= 2) {
+            int startIndex = (parts[0].equals("music") || parts[0].startsWith("@@")) ? 1 : 0;
+            if (startIndex < parts.length) {
+                return parts[startIndex];
+            }
+        }
+        return parts.length > 0 ? parts[0] : "Unknown Album";
     }
 
     @Override
