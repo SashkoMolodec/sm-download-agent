@@ -149,6 +149,8 @@ public class SlskdClient implements MusicSourcePort {
 
     private Stream<DownloadOption> splitByAlbumFolder(SlskdSearchEntryResponse response) {
         Map<String, List<SlskdSearchEntryResponse.SoulseekFile>> groupedByFolder = response.files().stream()
+                .filter(f -> f.size() > 0)
+                .filter(SlskdSearchEntryResponse.SoulseekFile::isAudioFile)
                 .collect(Collectors.groupingBy(f -> extractAlbumFolder(f.filename())));
 
         return groupedByFolder.entrySet().stream()
@@ -206,12 +208,11 @@ public class SlskdClient implements MusicSourcePort {
 
         String normalized = filePath.replace("/", "\\");
         String[] parts = normalized.split("\\\\");
+
         if (parts.length >= 2) {
-            int startIndex = (parts[0].equals("music") || parts[0].startsWith("@@")) ? 1 : 0;
-            if (startIndex < parts.length) {
-                return parts[startIndex];
-            }
+            return parts[parts.length - 2];
         }
+
         return parts.length > 0 ? parts[0] : "Unknown Album";
     }
 
