@@ -42,7 +42,7 @@ public class SlskdWebhookController {
         }
 
         try {
-            DownloadBatch batch = downloadContext.markFileCompleted(webhook.remoteFilename());
+            DownloadBatch batch = downloadContext.markFileCompleted(webhook.remoteFilename(), webhook.localFilename());
 
             if (batch == null) {
                 log.debug("No batch found for file: {} (possibly external download)", webhook.remoteFilename());
@@ -57,8 +57,8 @@ public class SlskdWebhookController {
                 var batchDto = DownloadBatchCompleteDto.of(
                         batch.getChatId(),
                         batch.getReleaseId(),
-                        batch.getDirectoryPath(),
-                        batch.getAllFiles()
+                        batch.getLocalDirectoryPath(),
+                        batch.getLocalFilenames()
                 );
                 batchCompleteProducer.sendBatchComplete(batchDto);
             }
@@ -69,16 +69,5 @@ public class SlskdWebhookController {
         }
 
         return ResponseEntity.ok().build();
-    }
-
-    private String extractFileName(String path) {
-        if (path == null) {
-            return "";
-        }
-        int lastSlash = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'));
-        if (lastSlash >= 0 && lastSlash < path.length() - 1) {
-            return path.substring(lastSlash + 1);
-        }
-        return path;
     }
 }

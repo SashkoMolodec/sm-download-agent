@@ -207,13 +207,13 @@ public class SlskdClient implements MusicSourcePort {
         }
 
         String normalized = filePath.replace("/", "\\");
-        String[] parts = normalized.split("\\\\");
+        int lastSlash = normalized.lastIndexOf('\\');
 
-        if (parts.length >= 2) {
-            return parts[parts.length - 2];
+        if (lastSlash > 0) {
+            return normalized.substring(0, lastSlash);
         }
 
-        return parts.length > 0 ? parts[0] : "Unknown Album";
+        return "Unknown Album";
     }
 
     @Override

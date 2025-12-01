@@ -1,6 +1,8 @@
 package com.sashkomusic.downloadagent.domain;
 
+import com.sashkomusic.downloadagent.config.SlskdPathConfig;
 import com.sashkomusic.downloadagent.domain.model.DownloadBatch;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -8,8 +10,11 @@ import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
+@RequiredArgsConstructor
 @Slf4j
 public class DownloadContext {
+
+    private final SlskdPathConfig pathConfig;
 
     // directoryPath -> DownloadBatch
     private final ConcurrentHashMap<String, DownloadBatch> batches = new ConcurrentHashMap<>();
@@ -20,16 +25,16 @@ public class DownloadContext {
             return;
         }
 
-        String directoryPath = extractDirectory(filenames.getFirst());
+        String remoteDirectoryPath = extractDirectory(filenames.getFirst());
 
-        DownloadBatch batch = new DownloadBatch(chatId, releaseId, directoryPath, filenames);
-        batches.put(directoryPath, batch);
+        DownloadBatch batch = new DownloadBatch(chatId, releaseId, remoteDirectoryPath, filenames);
+        batches.put(remoteDirectoryPath, batch);
 
         log.info("Registered download batch: releaseId={}, directory={}, files={}",
-                releaseId, directoryPath, filenames.size());
+                releaseId, remoteDirectoryPath, filenames.size());
     }
 
-    public DownloadBatch markFileCompleted(String remoteFilename) {
+    public DownloadBatch markFileCompleted(String remoteFilename, String localFilename) {
         String directory = extractDirectory(remoteFilename);
         DownloadBatch batch = batches.get(directory);
 
@@ -39,6 +44,10 @@ public class DownloadContext {
         }
 
         batch.markFileCompleted(remoteFilename);
+
+        String transformedLocalPath = pathConfig.transformToLocalPath(localFilename);
+        log.debug("Path transformation: {} -> {}", localFilename, transformedLocalPath);
+        batch.addLocalFilename(transformedLocalPath);
 
         if (batch.isComplete()) {
             batches.remove(directory);

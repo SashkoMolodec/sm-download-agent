@@ -1,6 +1,7 @@
 package com.sashkomusic.downloadagent.domain;
 
 import com.sashkomusic.downloadagent.domain.exception.MusicDownloadException;
+import com.sashkomusic.downloadagent.domain.model.DownloadOption;
 import com.sashkomusic.downloadagent.messaging.consumer.dto.DownloadFilesTaskDto;
 import com.sashkomusic.downloadagent.messaging.producer.dto.DownloadErrorDto;
 import com.sashkomusic.downloadagent.messaging.producer.DownloadErrorProducer;
@@ -22,7 +23,7 @@ public class DownloadService {
     public void download(DownloadFilesTaskDto task) {
         try {
             List<String> filenames = task.downloadOption().files().stream()
-                    .map(file -> file.filename())
+                    .map(DownloadOption.FileItem::filename)
                     .toList();
 
             downloadContext.registerBatch(task.chatId(), task.releaseId(), filenames);

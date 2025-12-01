@@ -3,6 +3,7 @@ package com.sashkomusic.downloadagent.domain.model;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -12,26 +13,34 @@ import java.util.Set;
 public class DownloadBatch {
     private final long chatId;
     private final String releaseId;
-    private final String directoryPath;
+    private final String remoteDirectoryPath;
     private final List<String> allFiles;
+
+    private final List<String> localFilenames;
+
     private final Set<String> remainingFiles;
 
-    public DownloadBatch(long chatId, String releaseId, String directoryPath, List<String> files) {
+    public DownloadBatch(long chatId, String releaseId, String remoteDirectoryPath, List<String> files) {
         this.chatId = chatId;
         this.releaseId = releaseId;
-        this.directoryPath = directoryPath;
+        this.remoteDirectoryPath = remoteDirectoryPath;
         this.allFiles = List.copyOf(files);
+        this.localFilenames = new ArrayList<>();
         this.remainingFiles = new HashSet<>(files);
         log.debug("Created download batch: releaseId={}, directory={}, totalFiles={}",
-                releaseId, directoryPath, files.size());
+                releaseId, remoteDirectoryPath, files.size());
     }
 
-    public void markFileCompleted(String filename) {
-        boolean removed = remainingFiles.remove(filename);
+    public void markFileCompleted(String remoteFilename) {
+        boolean removed = remainingFiles.remove(remoteFilename);
         if (removed) {
             log.debug("File completed: {} ({}/{} files remaining)",
-                    filename, remainingFiles.size(), allFiles.size());
+                    remoteFilename, remainingFiles.size(), allFiles.size());
         }
+    }
+
+    public void addLocalFilename(String localFilename) {
+        localFilenames.add(localFilename);
     }
 
     public boolean isComplete() {
@@ -44,5 +53,21 @@ public class DownloadBatch {
 
     public int getRemainingCount() {
         return remainingFiles.size();
+    }
+
+    public String getLocalDirectoryPath() {
+        if (localFilenames.isEmpty()) {
+            return "";
+        }
+        // Extract directory from first local filename
+        String firstLocal = localFilenames.getFirst();
+        if (firstLocal == null) {
+            return "";
+        }
+        int lastSlash = Math.max(firstLocal.lastIndexOf('\\'), firstLocal.lastIndexOf('/'));
+        if (lastSlash > 0) {
+            return firstLocal.substring(0, lastSlash);
+        }
+        return "";
     }
 }
