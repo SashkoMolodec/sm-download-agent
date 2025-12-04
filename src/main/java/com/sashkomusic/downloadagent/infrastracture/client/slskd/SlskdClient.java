@@ -10,6 +10,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Recover;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
@@ -38,16 +41,34 @@ public class SlskdClient implements MusicSourcePort {
     }
 
     @Override
+    @Retryable(
+            retryFor = NoSearchResultsException.class,
+            maxAttempts = 3,
+            backoff = @Backoff(delay = 2000)
+    )
     public List<DownloadOption> search(String artist, String release) {
         var query = artist + " " + release;
+        log.info("🔄 Soulseek search attempt for: {}", query);
+
         var searchId = initiateSearchRequest(query);
-
         int fileCount = waitForSearchToComplete(searchId);
-
-
         waitToStabilize(fileCount);
 
-        return getSearchResults(searchId);
+        List<DownloadOption> results = getSearchResults(searchId);
+
+        if (results.isEmpty()) {
+            log.warn("❌ No results found for query: {}, throwing exception to trigger retry", query);
+            throw new NoSearchResultsException("No results found for: " + query);
+        }
+
+        log.info("✅ Found {} results", results.size());
+        return results;
+    }
+
+    @Recover
+    public List<DownloadOption> recoverFromEmptySearch(NoSearchResultsException e, String artist, String release) {
+        log.error("🛑 RECOVERY: No results found after 3 attempts for: {} - {}", artist, release);
+        return List.of();
     }
 
     private UUID initiateSearchRequest(String query) {
@@ -217,6 +238,11 @@ public class SlskdClient implements MusicSourcePort {
     }
 
     @Override
+    @Retryable(
+            retryFor = MusicDownloadException.class,
+            maxAttempts = 5,
+            backoff = @Backoff(delay = 2000, multiplier = 1.5)
+    )
     public String initiateDownload(DownloadOption option) {
         String username = option.technicalMetadata().get("username");
 
@@ -225,7 +251,7 @@ public class SlskdClient implements MusicSourcePort {
             throw new MusicDownloadException("трохи даних бракує для запиту шоби скачати музло");
         }
 
-        log.info("Starting download from user={}, files={}", username, option.files().size());
+        log.info("Attempting download from user={}, files={}", username, option.files().size());
 
         List<Map<String, Object>> files = option.files().stream()
                 .map(f -> Map.<String, Object>of(
@@ -259,10 +285,18 @@ public class SlskdClient implements MusicSourcePort {
 
             return batchId;
         } catch (MusicDownloadException e) {
+            log.warn("Download attempt failed for username={}, will retry: {}", username, e.getMessage());
             throw e;
         } catch (Exception e) {
             log.error("Failed to initiate download for username={}: {}", username, e.getMessage());
             throw new MusicDownloadException("не вийшло розпочати скачування: " + e.getMessage(), e);
         }
+    }
+
+    @Recover
+    public String recoverFromDownloadFailure(MusicDownloadException e, DownloadOption option) {
+        String username = option.technicalMetadata().get("username");
+        log.error("Failed to download from username={} after 5 attempts: {}", username, e.getMessage());
+        throw new MusicDownloadException("не вийшло скачати після 5 спроб: " + e.getMessage(), e);
     }
 }
