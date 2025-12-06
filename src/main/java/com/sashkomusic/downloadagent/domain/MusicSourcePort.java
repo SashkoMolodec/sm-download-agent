@@ -9,4 +9,6 @@ public interface MusicSourcePort {
     List<DownloadOption> search(String artist, String release);
 
     String initiateDownload(DownloadOption option);
+
+    String getDownloadPath(DownloadOption option);
 }

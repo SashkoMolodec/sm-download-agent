@@ -30,6 +30,7 @@ dependencies {
     implementation 'org.springframework.retry:spring-retry'
     implementation 'org.springframework:spring-aspects'
     implementation 'org.springframework.kafka:spring-kafka'
+    implementation 'org.jsoup:jsoup:1.17.2'
 
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'

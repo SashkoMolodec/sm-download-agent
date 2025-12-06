@@ -1,7 +1,9 @@
 package com.sashkomusic.downloadagent.infrastracture.client.slskd;
 
+import com.sashkomusic.downloadagent.config.SlskdPathConfig;
 import com.sashkomusic.downloadagent.domain.MusicSourcePort;
 import com.sashkomusic.downloadagent.domain.exception.MusicDownloadException;
+import com.sashkomusic.downloadagent.domain.model.DownloadEngine;
 import com.sashkomusic.downloadagent.domain.model.DownloadOption;
 import com.sashkomusic.downloadagent.infrastracture.client.slskd.dto.SlskdDownloadResponse;
 import com.sashkomusic.downloadagent.infrastracture.client.slskd.dto.SlskdSearchEntryResponse;
@@ -33,11 +35,14 @@ public class SlskdClient implements MusicSourcePort {
 
     private final RestClient client;
     private final String apiKey;
+    private final SlskdPathConfig pathConfig;
 
     public SlskdClient(RestClient.Builder builder,
-                       @Value("${slskd.api-key:}") String apiKey) {
+                       @Value("${slskd.api-key:}") String apiKey,
+                       SlskdPathConfig pathConfig) {
         this.client = builder.baseUrl("http://localhost:5030").build();
         this.apiKey = apiKey;
+        this.pathConfig = pathConfig;
     }
 
     @Override
@@ -203,7 +208,7 @@ public class SlskdClient implements MusicSourcePort {
 
         return new DownloadOption(
                 UUID.randomUUID().toString(),
-                "soulseek",
+                DownloadEngine.SOULSEEK,
                 response.username() + " - " + albumFolder,
                 (int) totalSizeMB,
                 fileItems,
@@ -298,5 +303,20 @@ public class SlskdClient implements MusicSourcePort {
         String username = option.technicalMetadata().get("username");
         log.error("Failed to download from username={} after 5 attempts: {}", username, e.getMessage());
         throw new MusicDownloadException("не вийшло скачати після 5 спроб: " + e.getMessage(), e);
+    }
+
+    @Override
+    public String getDownloadPath(DownloadOption option) {
+        String username = option.technicalMetadata().get("username");
+        String albumFolder = option.technicalMetadata().get("albumFolder");
+
+        if (username == null || albumFolder == null) {
+            throw new IllegalArgumentException("Missing required metadata: username or albumFolder");
+        }
+
+        String containerPath = pathConfig.getContainerPath() + "/" + username + "/" + albumFolder;
+        containerPath = containerPath.replace("\\\\", "/").replace("\\", "/");
+
+        return pathConfig.transformToLocalPath(containerPath);
     }
 }
