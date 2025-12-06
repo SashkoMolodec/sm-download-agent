@@ -319,4 +319,10 @@ public class SlskdClient implements MusicSourcePort {
 
         return pathConfig.transformToLocalPath(containerPath);
     }
+
+    @Override
+    public void handleDownloadCompletion(long chatId, String releaseId, DownloadOption option, String downloadPath) {
+        // Soulseek uses webhooks - no monitoring needed
+        log.info("Soulseek download will be completed via webhook");
+    }
 }

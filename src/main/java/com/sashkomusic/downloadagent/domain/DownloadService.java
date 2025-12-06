@@ -21,7 +21,6 @@ public class DownloadService {
     private final Map<DownloadEngine, MusicSourcePort> musicSources;
     private final DownloadErrorProducer errorProducer;
     private final DownloadContext downloadContext;
-    private final DownloadMonitorService monitorService;
 
     public void download(DownloadFilesTaskDto task) {
         try {
@@ -40,20 +39,7 @@ public class DownloadService {
                     downloadId, option.source(), task.releaseId(), filenames.size());
 
             String downloadPath = client.getDownloadPath(option);
-            int expectedFileCount = resolveExpectedFileCount(option);
-
-            String artist = option.technicalMetadata().get("artist");
-            String title = option.technicalMetadata().get("title");
-
-            monitorService.startMonitoring(
-                    task.chatId(),
-                    task.releaseId(),
-                    downloadPath,
-                    expectedFileCount,
-                    option.source(),
-                    artist,
-                    title
-            );
+            client.handleDownloadCompletion(task.chatId(), task.releaseId(), option, downloadPath);
 
         } catch (MusicDownloadException e) {
             log.error("Download failed for chatId={}: {}", task.chatId(), e.getMessage());
@@ -62,13 +48,5 @@ public class DownloadService {
             log.error("Unexpected error during download for chatId={}: {}", task.chatId(), e.getMessage(), e);
             errorProducer.sendError(DownloadErrorDto.of(task.chatId(), "шось не то, пупупу... " + e.getMessage()));
         }
-    }
-
-    private static int resolveExpectedFileCount(DownloadOption option) {
-        int expectedFileCount = 1;
-        if (!option.files().isEmpty()) {
-            expectedFileCount = option.files().size();
-        }
-        return expectedFileCount;
     }
 }

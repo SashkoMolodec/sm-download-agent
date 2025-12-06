@@ -1,5 +1,6 @@
 package com.sashkomusic.downloadagent.infrastracture.client.qobuz;
 
+import com.sashkomusic.downloadagent.domain.DownloadMonitorService;
 import com.sashkomusic.downloadagent.domain.MusicSourcePort;
 import com.sashkomusic.downloadagent.domain.exception.MusicDownloadException;
 import com.sashkomusic.downloadagent.domain.model.DownloadEngine;
@@ -25,6 +26,7 @@ public class QobuzClient implements MusicSourcePort {
     private final RestClient restClient;
     private final QobuzCommandExecutor commandExecutor;
     private final QobuzQualityMapper qualityMapper;
+    private final DownloadMonitorService monitorService;
 
     @Value("${qobuz.cli-path:/usr/local/bin/qobuz-dl}")
     private String cliPath;
@@ -37,13 +39,15 @@ public class QobuzClient implements MusicSourcePort {
 
     public QobuzClient(RestClient.Builder restClientBuilder,
                        QobuzCommandExecutor commandExecutor,
-                       QobuzQualityMapper qualityMapper) {
+                       QobuzQualityMapper qualityMapper,
+                       DownloadMonitorService monitorService) {
         this.restClient = restClientBuilder
                 .baseUrl("https://www.qobuz.com")
                 .defaultHeader("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
                 .build();
         this.commandExecutor = commandExecutor;
         this.qualityMapper = qualityMapper;
+        this.monitorService = monitorService;
     }
 
     @Override
@@ -341,5 +345,25 @@ public class QobuzClient implements MusicSourcePort {
         // qobuz-dl creates folder: "Artist - AlbumTitle (Year) [Quality]" directly in downloadPath
         // We return the base downloadPath and monitor will search for folder matching artist+title
         return downloadPath;
+    }
+
+    @Override
+    public void handleDownloadCompletion(long chatId, String releaseId, DownloadOption option, String downloadPath) {
+        int expectedFileCount = option.files().isEmpty() ? 1 : option.files().size();
+
+        String artist = option.technicalMetadata().get("artist");
+        String title = option.technicalMetadata().get("title");
+
+        monitorService.startMonitoring(
+                chatId,
+                releaseId,
+                downloadPath,
+                expectedFileCount,
+                DownloadEngine.QOBUZ,
+                artist,
+                title
+        );
+
+        log.info("Started monitoring for Qobuz download: {}", downloadPath);
     }
 }
