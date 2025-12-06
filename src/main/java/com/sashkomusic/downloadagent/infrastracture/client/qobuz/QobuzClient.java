@@ -359,7 +359,6 @@ public class QobuzClient implements MusicSourcePort {
                 releaseId,
                 downloadPath,
                 expectedFileCount,
-                DownloadEngine.QOBUZ,
                 artist,
                 title
         );

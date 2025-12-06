@@ -1,6 +1,5 @@
 package com.sashkomusic.downloadagent.domain;
 
-import com.sashkomusic.downloadagent.domain.model.DownloadEngine;
 import com.sashkomusic.downloadagent.messaging.producer.DownloadBatchCompleteProducer;
 import com.sashkomusic.downloadagent.messaging.producer.dto.DownloadBatchCompleteDto;
 import lombok.RequiredArgsConstructor;
@@ -30,16 +29,16 @@ public class DownloadMonitorService {
     private final Map<String, DownloadMonitorTask> activeTasks = new ConcurrentHashMap<>();
 
     public void startMonitoring(long chatId, String releaseId, String downloadPath,
-                                 int expectedFileCount, DownloadEngine source, String artist, String title) {
+                                 int expectedFileCount, String artist, String title) {
         String taskId = releaseId + ":" + chatId;
 
         DownloadMonitorTask task = new DownloadMonitorTask(
-                chatId, releaseId, downloadPath, expectedFileCount, source, artist, title
+                chatId, releaseId, downloadPath, expectedFileCount, artist, title
         );
 
         activeTasks.put(taskId, task);
-        log.info("Started monitoring download: taskId={}, path={}, expectedFiles={}, source={}, artist={}, title={}",
-                 taskId, downloadPath, expectedFileCount, source, artist, title);
+        log.info("Started monitoring Qobuz download: taskId={}, path={}, expectedFiles={}, artist={}, title={}",
+                 taskId, downloadPath, expectedFileCount, artist, title);
     }
 
     @Scheduled(fixedDelay = 3000) // Every 3 seconds
@@ -62,61 +61,44 @@ public class DownloadMonitorService {
                     return false; // Keep monitoring
                 }
 
-                // For Qobuz, find folder matching artist and title (qobuz-dl creates: "Artist - Album (Year) [Quality]")
-                Path downloadDir = basePath;
-                if (task.source() == DownloadEngine.QOBUZ) {
-                    String artist = task.artist();
-                    String title = task.title();
+                // Find folder matching artist and title (qobuz-dl creates: "Artist - Album (Year) [Quality]")
+                String artist = task.artist();
+                String title = task.title();
 
-                    if (artist == null || title == null) {
-                        log.warn("Missing artist or title metadata for Qobuz download");
-                        return false;
+                if (artist == null || title == null) {
+                    log.warn("Missing artist or title metadata for Qobuz download");
+                    return false;
+                }
+
+                Path downloadDir;
+                try (Stream<Path> subdirs = Files.list(basePath)) {
+                    var albumFolder = subdirs
+                            .filter(Files::isDirectory)
+                            .filter(p -> {
+                                String folderName = p.getFileName().toString().toLowerCase();
+                                return folderName.contains(artist.toLowerCase()) &&
+                                       folderName.contains(title.toLowerCase());
+                            })
+                            .findFirst();
+
+                    if (albumFolder.isEmpty()) {
+                        log.info("Album folder not yet created matching artist='{}' and title='{}' in: {}",
+                                artist, title, basePath);
+                        return false; // Keep monitoring
                     }
 
-                    try (Stream<Path> subdirs = Files.list(basePath)) {
-                        var albumFolder = subdirs
-                                .filter(Files::isDirectory)
-                                .filter(p -> {
-                                    String folderName = p.getFileName().toString().toLowerCase();
-                                    return folderName.contains(artist.toLowerCase()) &&
-                                           folderName.contains(title.toLowerCase());
-                                })
-                                .findFirst();
-
-                        if (albumFolder.isEmpty()) {
-                            log.info("Album folder not yet created matching artist='{}' and title='{}' in: {}",
-                                    artist, title, basePath);
-                            return false; // Keep monitoring
-                        }
-
-                        downloadDir = albumFolder.get();
-                        log.info("Found Qobuz album folder: {}", downloadDir);
-                    }
+                    downloadDir = albumFolder.get();
+                    log.info("Found Qobuz album folder: {}", downloadDir);
                 }
 
                 List<String> audioFiles = findAudioFiles(downloadDir);
                 int currentCount = audioFiles.size();
 
-                log.info("taskId={}, checking: {} / {} audio files, source={}",
-                         taskId, currentCount, task.expectedFileCount(), task.source());
+                log.info("taskId={}, checking: {} audio files", taskId, currentCount);
 
-                boolean isComplete = false;
-
-                if (task.source() == DownloadEngine.QOBUZ) {
-                    // For Qobuz: check if files are stable (not changing for 6 seconds)
-                    if (task.isStable(currentCount)) {
-                        log.info("Download complete (Qobuz stable): taskId={}, files={}", taskId, currentCount);
-                        isComplete = true;
-                    }
-                } else {
-                    // For Soulseek: check exact file count
-                    if (currentCount >= task.expectedFileCount()) {
-                        log.info("Download complete (Soulseek count match): taskId={}, files={}", taskId, currentCount);
-                        isComplete = true;
-                    }
-                }
-
-                if (isComplete) {
+                // Check if files are stable (not changing for 6 seconds)
+                if (task.isStable(currentCount)) {
+                    log.info("Qobuz download complete (stable): taskId={}, files={}", taskId, currentCount);
                     batchCompleteProducer.sendBatchComplete(
                             DownloadBatchCompleteDto.of(
                                     task.chatId(),
@@ -157,19 +139,17 @@ public class DownloadMonitorService {
         private final String releaseId;
         private final String downloadPath;
         private final int expectedFileCount;
-        private final DownloadEngine source;
         private final String artist;
         private final String title;
         private int lastFileCount = -1;
         private int stableChecks = 0;
 
         public DownloadMonitorTask(long chatId, String releaseId, String downloadPath,
-                                    int expectedFileCount, DownloadEngine source, String artist, String title) {
+                                    int expectedFileCount, String artist, String title) {
             this.chatId = chatId;
             this.releaseId = releaseId;
             this.downloadPath = downloadPath;
             this.expectedFileCount = expectedFileCount;
-            this.source = source;
             this.artist = artist;
             this.title = title;
         }
@@ -178,7 +158,6 @@ public class DownloadMonitorService {
         public String releaseId() { return releaseId; }
         public String downloadPath() { return downloadPath; }
         public int expectedFileCount() { return expectedFileCount; }
-        public DownloadEngine source() { return source; }
         public String artist() { return artist; }
         public String title() { return title; }
 
