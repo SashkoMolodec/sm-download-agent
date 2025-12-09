@@ -1,5 +1,6 @@
 package com.sashkomusic.downloadagent.messaging.producer;
 
+import com.sashkomusic.downloadagent.domain.model.DownloadEngine;
 import com.sashkomusic.downloadagent.domain.model.DownloadOption;
 import com.sashkomusic.downloadagent.messaging.producer.dto.SearchFilesResultDto;
 import lombok.RequiredArgsConstructor;
@@ -18,10 +19,10 @@ public class SearchResultProducer {
 
     private final KafkaTemplate<String, SearchFilesResultDto> kafkaTemplate;
 
-    public void sendResults(long chatId, String releaseId, List<DownloadOption> results) {
-        log.info("Sending {} results back to chat {}", results.size(), chatId);
+    public void sendResults(long chatId, String releaseId, DownloadEngine source, List<DownloadOption> results, boolean autoDownload) {
+        log.info("Sending {} results from {} back to chat {} (autoDownload={})", results.size(), source, chatId, autoDownload);
 
-        SearchFilesResultDto dto = new SearchFilesResultDto(chatId, releaseId, results);
+        SearchFilesResultDto dto = new SearchFilesResultDto(chatId, releaseId, source, results, autoDownload);
 
         kafkaTemplate.send(RESULT_TOPIC, dto);
     }

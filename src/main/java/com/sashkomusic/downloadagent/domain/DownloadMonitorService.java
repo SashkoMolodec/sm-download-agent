@@ -37,7 +37,7 @@ public class DownloadMonitorService {
         );
 
         activeTasks.put(taskId, task);
-        log.info("Started monitoring Qobuz download: taskId={}, path={}, expectedFiles={}, artist={}, title={}",
+        log.info("Started monitoring download: taskId={}, path={}, expectedFiles={}, artist={}, title={}",
                  taskId, downloadPath, expectedFileCount, artist, title);
     }
 
@@ -61,23 +61,28 @@ public class DownloadMonitorService {
                     return false; // Keep monitoring
                 }
 
-                // Find folder matching artist and title (qobuz-dl creates: "Artist - Album (Year) [Quality]")
                 String artist = task.artist();
                 String title = task.title();
 
                 if (artist == null || title == null) {
-                    log.warn("Missing artist or title metadata for Qobuz download");
+                    log.warn("Missing artist or title metadata for download");
                     return false;
                 }
 
                 Path downloadDir;
-                try (Stream<Path> subdirs = Files.list(basePath)) {
+                String normalizedArtist = normalizeForMatching(artist);
+                String normalizedTitle = normalizeForMatching(title);
+
+                log.debug("Searching for normalized artist='{}' and title='{}' (original: '{}', '{}')",
+                        normalizedArtist, normalizedTitle, artist, title);
+
+                try (Stream<Path> subdirs = Files.walk(basePath, 2)) {
                     var albumFolder = subdirs
                             .filter(Files::isDirectory)
                             .filter(p -> {
-                                String folderName = p.getFileName().toString().toLowerCase();
-                                return folderName.contains(artist.toLowerCase()) &&
-                                       folderName.contains(title.toLowerCase());
+                                String fullPath = normalizeForMatching(p.toString());
+                                return fullPath.contains(normalizedArtist) &&
+                                       fullPath.contains(normalizedTitle);
                             })
                             .findFirst();
 
@@ -88,7 +93,7 @@ public class DownloadMonitorService {
                     }
 
                     downloadDir = albumFolder.get();
-                    log.info("Found Qobuz album folder: {}", downloadDir);
+                    log.info("Found album folder: {}", downloadDir);
                 }
 
                 List<String> audioFiles = findAudioFiles(downloadDir);
@@ -98,7 +103,7 @@ public class DownloadMonitorService {
 
                 // Check if files are stable (not changing for 6 seconds)
                 if (task.isStable(currentCount)) {
-                    log.info("Qobuz download complete (stable): taskId={}, files={}", taskId, currentCount);
+                    log.info("Download complete (stable): taskId={}, files={}", taskId, currentCount);
                     batchCompleteProducer.sendBatchComplete(
                             DownloadBatchCompleteDto.of(
                                     task.chatId(),
@@ -132,6 +137,18 @@ public class DownloadMonitorService {
     private boolean isAudioFile(String filename) {
         String lower = filename.toLowerCase();
         return AUDIO_EXTENSIONS.stream().anyMatch(ext -> lower.endsWith("." + ext));
+    }
+
+    /**
+     * Normalizes strings for matching by removing special characters, spaces, and converting to lowercase.
+     * Examples:
+     * - "HYPERREAL EP [SCX021]" -> "hyperrealepscx021"
+     * - "hyperreal-ep-scx021" -> "hyperrealepscx021"
+     * - "Artist - Album (2024)" -> "artistalbum2024"
+     */
+    private String normalizeForMatching(String text) {
+        return text.toLowerCase()
+                .replaceAll("[\\s\\-_\\[\\](){}]", ""); // Remove spaces, dashes, underscores, brackets, parentheses
     }
 
     public static class DownloadMonitorTask {

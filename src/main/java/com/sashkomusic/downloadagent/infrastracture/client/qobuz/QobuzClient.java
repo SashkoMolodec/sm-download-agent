@@ -51,6 +51,11 @@ public class QobuzClient implements MusicSourcePort {
     }
 
     @Override
+    public boolean autoDownloadEnabled() {
+        return true;
+    }
+
+    @Override
     public List<DownloadOption> search(String artist, String release) {
         log.info("Searching Qobuz via web scraping for: artist='{}', release='{}'", artist, release);
 
@@ -312,7 +317,7 @@ public class QobuzClient implements MusicSourcePort {
     private DownloadOption createOption(QobuzSearchResult album, int quality) {
         String optionId = "qobuz-" + album.albumId() + "-q" + quality;
         String qualityLabel = qualityMapper.getQualityLabel(quality);
-        String displayName = album.title() + " - " + qualityLabel;
+        String displayName = album.artist() + " - " + album.title() + " - " + qualityLabel;
 
         // No size/length estimation - will be known after download
         int totalSizeMB = 0;

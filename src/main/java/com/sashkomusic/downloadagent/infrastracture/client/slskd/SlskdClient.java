@@ -46,6 +46,11 @@ public class SlskdClient implements MusicSourcePort {
     }
 
     @Override
+    public boolean autoDownloadEnabled() {
+        return false;
+    }
+
+    @Override
     @Retryable(
             retryFor = NoSearchResultsException.class,
             maxAttempts = 3,
