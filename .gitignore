@@ -25,3 +25,18 @@ Thumbs.db
 
 # Application specific
 slskd/
+downloads/
+cookies.txt
+
+# Audio files
+*.mp3
+*.flac
+*.m4a
+*.ogg
+*.wav
+*.opus
+*.aac
+*.wma
+*.alac
+*.ape
+*.wv
