@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
@@ -69,31 +70,10 @@ public class DownloadMonitorService {
                     return false;
                 }
 
-                Path downloadDir;
-                String normalizedArtist = normalizeForMatching(artist);
-                String normalizedTitle = normalizeForMatching(title);
-
-                log.debug("Searching for normalized artist='{}' and title='{}' (original: '{}', '{}')",
-                        normalizedArtist, normalizedTitle, artist, title);
-
-                try (Stream<Path> subdirs = Files.walk(basePath, 2)) {
-                    var albumFolder = subdirs
-                            .filter(Files::isDirectory)
-                            .filter(p -> {
-                                String fullPath = normalizeForMatching(p.toString());
-                                return fullPath.contains(normalizedArtist) &&
-                                       fullPath.contains(normalizedTitle);
-                            })
-                            .findFirst();
-
-                    if (albumFolder.isEmpty()) {
-                        log.info("Album folder not yet created matching artist='{}' and title='{}' in: {}",
-                                artist, title, basePath);
-                        return false; // Keep monitoring
-                    }
-
-                    downloadDir = albumFolder.get();
-                    log.info("Found album folder: {}", downloadDir);
+                Path downloadDir = findAlbumFolder(basePath, artist, title).orElse(null);
+                if (downloadDir == null) {
+                    log.info("Album folder not yet created for: {} - {}", artist, title);
+                    return false;
                 }
 
                 List<String> audioFiles = findAudioFiles(downloadDir);
@@ -149,6 +129,61 @@ public class DownloadMonitorService {
     private String normalizeForMatching(String text) {
         return text.toLowerCase()
                 .replaceAll("[\\s\\-_\\[\\](){}]", ""); // Remove spaces, dashes, underscores, brackets, parentheses
+    }
+
+    /**
+     * Finds the album folder by searching for both artist and title in the path.
+     * If not found, falls back to searching only by title (for Compilations/Various Artists folders).
+     *
+     * @param basePath the base download directory to search in
+     * @param artist the artist name
+     * @param title the album title
+     * @return Optional containing the album folder path if found, empty otherwise
+     */
+    private Optional<Path> findAlbumFolder(Path basePath, String artist, String title) throws IOException {
+        String normalizedArtist = normalizeForMatching(artist);
+        String normalizedTitle = normalizeForMatching(title);
+
+        log.debug("Searching for normalized artist='{}' and title='{}' (original: '{}', '{}')",
+                normalizedArtist, normalizedTitle, artist, title);
+
+        // Step 1: Try matching both artist and title
+        try (Stream<Path> subdirs = Files.walk(basePath, 2)) {
+            Optional<Path> albumFolder = subdirs
+                    .filter(Files::isDirectory)
+                    .filter(p -> !p.equals(basePath))
+                    .filter(p -> {
+                        String fullPath = normalizeForMatching(p.toString());
+                        return fullPath.contains(normalizedArtist) &&
+                               fullPath.contains(normalizedTitle);
+                    })
+                    .findFirst();
+
+            if (albumFolder.isPresent()) {
+                log.info("Found album folder (artist+title match): {}", albumFolder.get());
+                return albumFolder;
+            }
+        }
+
+        // Step 2: Fallback - try matching only title (for Compilations/Various Artists)
+        log.debug("No folder matching both artist='{}' and title='{}', trying title only",
+                artist, title);
+
+        try (Stream<Path> subdirs = Files.walk(basePath, 2)) {
+            Optional<Path> albumFolder = subdirs
+                    .filter(Files::isDirectory)
+                    .filter(p -> !p.equals(basePath))
+                    .filter(p -> {
+                        String fullPath = normalizeForMatching(p.toString());
+                        return fullPath.contains(normalizedTitle);
+                    })
+                    .findFirst();
+
+            if (albumFolder.isPresent()) {
+                log.info("Found album folder (title-only match): {}", albumFolder.get());
+            }
+            return albumFolder;
+        }
     }
 
     public static class DownloadMonitorTask {
