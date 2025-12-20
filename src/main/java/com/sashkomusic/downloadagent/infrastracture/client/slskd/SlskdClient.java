@@ -39,8 +39,10 @@ public class SlskdClient implements MusicSourcePort {
 
     public SlskdClient(RestClient.Builder builder,
                        @Value("${slskd.api-key:}") String apiKey,
+                       @Value("${slskd.base-url:http://localhost:5030}") String baseUrl,
                        SlskdPathConfig pathConfig) {
-        this.client = builder.baseUrl("http://localhost:5030").build();
+        log.info("Initializing SlskdClient with base URL: {}", baseUrl);
+        this.client = builder.baseUrl(baseUrl).build();
         this.apiKey = apiKey;
         this.pathConfig = pathConfig;
     }
@@ -91,20 +93,25 @@ public class SlskdClient implements MusicSourcePort {
                 "minimumPeerUploadSpeed", 0
         );
 
-        SlskdSearchEventResponse response = client.post()
-                .uri("/api/v0/searches")
-                .header("X-API-KEY", apiKey)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(searchRequest)
-                .retrieve()
-                .body(SlskdSearchEventResponse.class);
+        try {
+            SlskdSearchEventResponse response = client.post()
+                    .uri("/api/v0/searches")
+                    .header("X-API-KEY", apiKey)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(searchRequest)
+                    .retrieve()
+                    .body(SlskdSearchEventResponse.class);
 
-        if (response == null || response.getId() == null) {
-            throw new RuntimeException("Failed to initiate search for query: " + query);
+            if (response == null || response.getId() == null) {
+                throw new RuntimeException("Failed to initiate search for query: " + query);
+            }
+
+            log.info("Search initiated: '{}' (ID: {})", query, response.getId());
+            return response.getId();
+        } catch (Exception e) {
+            log.error("Failed to initiate search for query '{}': {}", query, e.getMessage(), e);
+            throw new RuntimeException("Failed to connect to slskd service. Check if slskd is running and accessible", e);
         }
-
-        log.info("Search initiated: '{}' (ID: {})", query, response.getId());
-        return response.getId();
     }
 
     private int waitForSearchToComplete(UUID searchId) {
