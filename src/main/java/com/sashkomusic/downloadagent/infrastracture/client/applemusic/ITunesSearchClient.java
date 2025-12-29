@@ -1,11 +1,11 @@
 package com.sashkomusic.downloadagent.infrastracture.client.applemusic;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClient;
 
 import java.util.Collections;
 import java.util.List;
@@ -13,35 +13,37 @@ import java.util.stream.Collectors;
 
 @Service
 @Slf4j
-@RequiredArgsConstructor
 public class ITunesSearchClient {
 
     private static final String ITUNES_SEARCH_API = "https://itunes.apple.com/search";
     private static final int MAX_RESULTS = 3;
 
-    private final RestTemplate restTemplate;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final RestClient restClient;
 
+    public ITunesSearchClient(RestClient.Builder restClientBuilder) {
+        this.restClient = restClientBuilder
+                .baseUrl(ITUNES_SEARCH_API)
+                .build();
+    }
+
+    @CircuitBreaker(name = "itunesSearchClient", fallbackMethod = "searchFallback")
+    @Retry(name = "itunesSearchClient")
     public List<AppleMusicSearchResult> search(String artist, String title) {
+        log.info("Searching Apple Music: artist={}, title={}", artist, title);
+
+        String searchTerm = buildSearchTerm(artist, title);
+
         try {
-            log.info("Searching Apple Music: artist={}, title={}", artist, title);
+            iTunesSearchResponse searchResponse = restClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .queryParam("term", searchTerm)
+                            .queryParam("entity", "album")
+                            .queryParam("limit", 5)
+                            .build())
+                    .retrieve()
+                    .body(iTunesSearchResponse.class);
 
-            String searchTerm = buildSearchTerm(artist, title);
-            String url = String.format("%s?term=%s&entity=album&limit=5",
-                    ITUNES_SEARCH_API,
-                    searchTerm);
-
-            log.debug("iTunes API URL: {}", url);
-
-            String response = restTemplate.getForObject(url, String.class);
-            if (response == null || response.isBlank()) {
-                log.warn("Empty response from iTunes API");
-                return Collections.emptyList();
-            }
-
-            iTunesSearchResponse searchResponse = objectMapper.readValue(response, iTunesSearchResponse.class);
-
-            if (searchResponse.results == null || searchResponse.results.isEmpty()) {
+            if (searchResponse == null || searchResponse.results == null || searchResponse.results.isEmpty()) {
                 log.info("No results found in iTunes for: {}", searchTerm);
                 return Collections.emptyList();
             }
@@ -55,8 +57,13 @@ public class ITunesSearchClient {
 
         } catch (Exception e) {
             log.error("Error searching Apple Music: artist={}, title={}", artist, title, e);
-            return Collections.emptyList();
+            throw e;
         }
+    }
+
+    private List<AppleMusicSearchResult> searchFallback(String artist, String title, Exception e) {
+        log.warn("iTunes search fallback triggered for '{}' - '{}': {}", artist, title, e.getMessage());
+        return Collections.emptyList();
     }
 
     private String buildSearchTerm(String artist, String title) {

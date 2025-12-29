@@ -8,13 +8,12 @@ import com.sashkomusic.downloadagent.domain.model.DownloadOption;
 import com.sashkomusic.downloadagent.infrastracture.client.slskd.dto.SlskdDownloadResponse;
 import com.sashkomusic.downloadagent.infrastracture.client.slskd.dto.SlskdSearchEntryResponse;
 import com.sashkomusic.downloadagent.infrastracture.client.slskd.dto.SlskdSearchEventResponse;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
-import org.springframework.retry.annotation.Backoff;
-import org.springframework.retry.annotation.Recover;
-import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
@@ -53,11 +52,8 @@ public class SlskdClient implements MusicSourcePort {
     }
 
     @Override
-    @Retryable(
-            retryFor = NoSearchResultsException.class,
-            maxAttempts = 3,
-            backoff = @Backoff(delay = 2000)
-    )
+    @CircuitBreaker(name = "slskdClient", fallbackMethod = "searchFallback")
+    @Retry(name = "slskdClient")
     public List<DownloadOption> search(String artist, String release) {
         var query = artist + " " + release;
         log.info("🔄 Soulseek search attempt for: {}", query);
@@ -77,9 +73,8 @@ public class SlskdClient implements MusicSourcePort {
         return results;
     }
 
-    @Recover
-    public List<DownloadOption> recoverFromEmptySearch(NoSearchResultsException e, String artist, String release) {
-        log.error("🛑 RECOVERY: No results found after 3 attempts for: {} - {}", artist, release);
+    private List<DownloadOption> searchFallback(String artist, String release, Exception e) {
+        log.warn("Slskd search fallback triggered for '{}' - '{}': {}", artist, release, e.getMessage());
         return List.of();
     }
 
@@ -255,11 +250,8 @@ public class SlskdClient implements MusicSourcePort {
     }
 
     @Override
-    @Retryable(
-            retryFor = MusicDownloadException.class,
-            maxAttempts = 5,
-            backoff = @Backoff(delay = 2000, multiplier = 1.5)
-    )
+    @CircuitBreaker(name = "slskdClient", fallbackMethod = "initiateDownloadFallback")
+    @Retry(name = "slskdClient")
     public String initiateDownload(DownloadOption option) {
         String username = option.technicalMetadata().get("username");
 
@@ -310,11 +302,10 @@ public class SlskdClient implements MusicSourcePort {
         }
     }
 
-    @Recover
-    public String recoverFromDownloadFailure(MusicDownloadException e, DownloadOption option) {
+    private String initiateDownloadFallback(DownloadOption option, Exception e) {
         String username = option.technicalMetadata().get("username");
-        log.error("Failed to download from username={} after 5 attempts: {}", username, e.getMessage());
-        throw new MusicDownloadException("не вийшло скачати після 5 спроб: " + e.getMessage(), e);
+        log.warn("Slskd initiateDownload fallback triggered for username={}: {}", username, e.getMessage());
+        throw new MusicDownloadException("не вийшло скачати після кількох спроб: " + e.getMessage(), e);
     }
 
     @Override
