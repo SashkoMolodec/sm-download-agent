@@ -39,7 +39,7 @@ public class QobuzClient implements MusicSourcePort {
     @Value("${qobuz.download-path:/downloads/qobuz}")
     private String downloadPath;
 
-    @Value("${qobuz.search-limit:5}")
+    @Value("${qobuz.search-limit:10}")
     private int searchLimit;
 
     public QobuzClient(RestClient.Builder restClientBuilder,

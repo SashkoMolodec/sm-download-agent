@@ -184,6 +184,7 @@ public class SlskdClient implements MusicSourcePort {
                 .filter(r -> r.lockedFileCount() == 0)
                 .filter(SlskdSearchEntryResponse::canDownload)
                 .flatMap(this::splitByAlbumFolder)
+                .limit(10)
                 .toList();
     }
 

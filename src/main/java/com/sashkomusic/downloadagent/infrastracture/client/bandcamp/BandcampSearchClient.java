@@ -85,7 +85,7 @@ public class BandcampSearchClient {
             log.error("Error parsing Bandcamp search results: {}", ex.getMessage(), ex);
         }
 
-        return results;
+        return results.stream().limit(10).toList();
     }
 
     private String extractType(Element element) {

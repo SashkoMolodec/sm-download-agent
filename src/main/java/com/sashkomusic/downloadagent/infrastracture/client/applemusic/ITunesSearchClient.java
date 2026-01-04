@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
 public class ITunesSearchClient {
 
     private static final String ITUNES_SEARCH_API = "https://itunes.apple.com/search";
-    private static final int MAX_RESULTS = 3;
+    private static final int MAX_RESULTS = 10;
 
     private final RestClient restClient;
 
@@ -38,7 +38,7 @@ public class ITunesSearchClient {
                     .uri(uriBuilder -> uriBuilder
                             .queryParam("term", searchTerm)
                             .queryParam("entity", "album")
-                            .queryParam("limit", 5)
+                            .queryParam("limit", 10)
                             .build())
                     .retrieve()
                     .body(iTunesSearchResponse.class);
