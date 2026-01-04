@@ -15,20 +15,22 @@ public class DownloadBatch {
     private final String releaseId;
     private final String remoteDirectoryPath;
     private final List<String> allFiles;
+    private final DownloadEngine source;
 
     private final List<String> localFilenames;
 
     private final Set<String> remainingFiles;
 
-    public DownloadBatch(long chatId, String releaseId, String remoteDirectoryPath, List<String> files) {
+    public DownloadBatch(long chatId, String releaseId, String remoteDirectoryPath, List<String> files, DownloadEngine source) {
         this.chatId = chatId;
         this.releaseId = releaseId;
         this.remoteDirectoryPath = remoteDirectoryPath;
         this.allFiles = List.copyOf(files);
+        this.source = source;
         this.localFilenames = new ArrayList<>();
         this.remainingFiles = new HashSet<>(files);
-        log.debug("Created download batch: releaseId={}, directory={}, totalFiles={}",
-                releaseId, remoteDirectoryPath, files.size());
+        log.debug("Created download batch: releaseId={}, directory={}, source={}, totalFiles={}",
+                releaseId, remoteDirectoryPath, source, files.size());
     }
 
     public void markFileCompleted(String remoteFilename) {

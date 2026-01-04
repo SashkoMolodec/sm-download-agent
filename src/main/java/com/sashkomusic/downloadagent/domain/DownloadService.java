@@ -1,6 +1,7 @@
 package com.sashkomusic.downloadagent.domain;
 
 import com.sashkomusic.downloadagent.domain.exception.MusicDownloadException;
+import com.sashkomusic.downloadagent.domain.model.DownloadBatch;
 import com.sashkomusic.downloadagent.domain.model.DownloadEngine;
 import com.sashkomusic.downloadagent.domain.model.DownloadOption;
 import com.sashkomusic.downloadagent.messaging.consumer.dto.DownloadFilesTaskDto;
@@ -24,17 +25,17 @@ public class DownloadService {
 
     public void download(DownloadFilesTaskDto task) {
         try {
-            List<String> filenames = task.downloadOption().files().stream()
+            DownloadOption option = task.downloadOption();
+
+            List<String> filenames = option.files().stream()
                     .map(DownloadOption.FileItem::filename)
                     .toList();
 
-            downloadContext.registerBatch(task.chatId(), task.releaseId(), filenames);
-
-            DownloadOption option = task.downloadOption();
+            downloadContext.registerBatch(task.chatId(), task.releaseId(), filenames, option.source());
             MusicSourcePort client = musicSources.get(option.source());
             log.info("Using {} client for download", option.source());
 
-            String downloadId = client.initiateDownload(option);
+            String downloadId = client.initiateDownload(option, task.releaseId());
             log.info("Download initiated: downloadId={}, source={}, releaseId={}, files={}",
                     downloadId, option.source(), task.releaseId(), filenames.size());
 
@@ -48,5 +49,30 @@ public class DownloadService {
             log.error("Unexpected error during download for chatId={}: {}", task.chatId(), e.getMessage(), e);
             errorProducer.sendError(DownloadErrorDto.of(task.chatId(), "шось не то, пупупу... " + e.getMessage()));
         }
+    }
+
+    public void cancelDownload(long chatId, String releaseId) {
+        log.info("Attempting to cancel download for chatId={}, releaseId={}", chatId, releaseId);
+
+        DownloadBatch batch = downloadContext.findBatchByReleaseId(releaseId);
+
+        if (batch == null) {
+            log.warn("Cancel failed: no active download found for releaseId={}", releaseId);
+            errorProducer.sendError(DownloadErrorDto.of(chatId,
+                    "завантаження вже завершилось або не знайдено 🤷"));
+            return;
+        }
+
+        DownloadEngine source = batch.getSource();
+        MusicSourcePort client = musicSources.get(source);
+
+        if (client != null) {
+            client.cancelDownload(releaseId);
+        }
+
+        downloadContext.removeBatchByReleaseId(releaseId);
+
+        log.info("Successfully cancelled download for releaseId={}", releaseId);
+        errorProducer.sendError(DownloadErrorDto.of(chatId, "❌ **скасовано завантаження**"));
     }
 }

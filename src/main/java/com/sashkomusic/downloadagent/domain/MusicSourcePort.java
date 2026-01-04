@@ -10,9 +10,11 @@ public interface MusicSourcePort {
 
     List<DownloadOption> search(String artist, String release);
 
-    String initiateDownload(DownloadOption option);
+    String initiateDownload(DownloadOption option, String releaseId);
 
     String getDownloadPath(DownloadOption option);
 
     void handleDownloadCompletion(long chatId, String releaseId, DownloadOption option, String downloadPath);
+
+    void cancelDownload(String releaseId);
 }

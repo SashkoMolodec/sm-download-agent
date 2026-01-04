@@ -2,6 +2,7 @@ package com.sashkomusic.downloadagent.domain;
 
 import com.sashkomusic.downloadagent.config.SlskdPathConfig;
 import com.sashkomusic.downloadagent.domain.model.DownloadBatch;
+import com.sashkomusic.downloadagent.domain.model.DownloadEngine;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -16,30 +17,26 @@ public class DownloadContext {
 
     private final SlskdPathConfig pathConfig;
 
-    // directoryPath -> DownloadBatch
     private final ConcurrentHashMap<String, DownloadBatch> batches = new ConcurrentHashMap<>();
 
-    public void registerBatch(long chatId, String releaseId, List<String> filenames) {
-        if (filenames.isEmpty()) {
-            log.warn("Attempted to register empty batch for chatId={}, releaseId={}", chatId, releaseId);
-            return;
-        }
+    public void registerBatch(long chatId, String releaseId, List<String> filenames, DownloadEngine source) {
+        String remoteDirectoryPath = filenames.isEmpty() ? "" : extractDirectory(filenames.getFirst());
 
-        String remoteDirectoryPath = extractDirectory(filenames.getFirst());
+        DownloadBatch batch = new DownloadBatch(chatId, releaseId, remoteDirectoryPath, filenames, source);
+        batches.put(releaseId, batch);
 
-        DownloadBatch batch = new DownloadBatch(chatId, releaseId, remoteDirectoryPath, filenames);
-        batches.put(remoteDirectoryPath, batch);
-
-        log.info("Registered download batch: releaseId={}, directory={}, files={}",
-                releaseId, remoteDirectoryPath, filenames.size());
+        log.info("Registered download batch: releaseId={}, directory={}, source={}, files={}",
+                releaseId, remoteDirectoryPath, source, filenames.size());
     }
 
     public DownloadBatch markFileCompleted(String remoteFilename, String localFilename) {
-        String directory = extractDirectory(remoteFilename);
-        DownloadBatch batch = batches.get(directory);
+        DownloadBatch batch = batches.values().stream()
+                .filter(b -> b.getAllFiles().contains(remoteFilename))
+                .findFirst()
+                .orElse(null);
 
         if (batch == null) {
-            log.warn("No batch found for file: {} (directory: {})", remoteFilename, directory);
+            log.warn("No batch found for file: {}", remoteFilename);
             return null;
         }
 
@@ -50,12 +47,25 @@ public class DownloadContext {
         batch.addLocalFilename(transformedLocalPath);
 
         if (batch.isComplete()) {
-            batches.remove(directory);
-            log.info("Download batch completed: releaseId={}, directory={}",
-                    batch.getReleaseId(), directory);
+            batches.remove(batch.getReleaseId());
+            log.info("Download batch completed: releaseId={}", batch.getReleaseId());
         }
 
         return batch;
+    }
+
+    public DownloadBatch findBatchByReleaseId(String releaseId) {
+        return batches.get(releaseId);
+    }
+
+    public boolean removeBatchByReleaseId(String releaseId) {
+        DownloadBatch batch = batches.remove(releaseId);
+        if (batch != null) {
+            log.info("Removed download batch for releaseId={}", releaseId);
+            return true;
+        }
+        log.warn("No batch found to remove for releaseId={}", releaseId);
+        return false;
     }
 
     private String extractDirectory(String path) {

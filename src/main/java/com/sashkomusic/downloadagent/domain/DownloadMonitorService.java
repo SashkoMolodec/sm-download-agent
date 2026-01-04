@@ -42,6 +42,16 @@ public class DownloadMonitorService {
                  taskId, downloadPath, expectedFileCount, artist, title);
     }
 
+    public void stopMonitoring(String releaseId) {
+        activeTasks.entrySet().removeIf(entry -> {
+            if (entry.getValue().releaseId().equals(releaseId)) {
+                log.info("Stopped monitoring for releaseId={}", releaseId);
+                return true;
+            }
+            return false;
+        });
+    }
+
     @Scheduled(fixedDelay = 3000) // Every 3 seconds
     public void checkDownloads() {
         if (activeTasks.isEmpty()) {

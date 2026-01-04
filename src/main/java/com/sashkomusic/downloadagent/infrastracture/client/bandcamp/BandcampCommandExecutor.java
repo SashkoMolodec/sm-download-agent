@@ -1,4 +1,4 @@
-package com.sashkomusic.downloadagent.infrastracture.client.qobuz;
+package com.sashkomusic.downloadagent.infrastracture.client.bandcamp;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -10,7 +10,7 @@ import java.util.concurrent.CompletableFuture;
 
 @Slf4j
 @Component
-public class QobuzCommandExecutor {
+public class BandcampCommandExecutor {
 
     public CompletableFuture<Process> executeAsync(String... command) {
         return CompletableFuture.supplyAsync(() -> {
@@ -26,7 +26,7 @@ public class QobuzCommandExecutor {
 
                 return process;
             } catch (IOException e) {
-                throw new RuntimeException("Failed to start qobuz-dl process", e);
+                throw new RuntimeException("Failed to start bandcamp-dl process", e);
             }
         });
     }
@@ -36,17 +36,17 @@ public class QobuzCommandExecutor {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    log.info("[qobuz-dl] {}", line);
+                    log.info("[bandcamp-dl] {}", line);
                 }
 
                 int exitCode = process.waitFor();
                 if (exitCode != 0) {
-                    log.error("Qobuz download failed with exit code {}", exitCode);
+                    log.error("Bandcamp download failed with exit code {}", exitCode);
                 } else {
-                    log.info("qobuz-dl completed successfully");
+                    log.info("bandcamp-dl completed successfully");
                 }
             } catch (Exception e) {
-                log.error("Error reading qobuz-dl output: {}", e.getMessage(), e);
+                log.error("Error reading bandcamp-dl output: {}", e.getMessage(), e);
             }
         });
     }

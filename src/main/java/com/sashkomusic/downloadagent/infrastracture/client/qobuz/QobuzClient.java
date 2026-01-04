@@ -1,5 +1,6 @@
 package com.sashkomusic.downloadagent.infrastracture.client.qobuz;
 
+import com.sashkomusic.downloadagent.domain.ActiveDownloadRegistry;
 import com.sashkomusic.downloadagent.domain.DownloadMonitorService;
 import com.sashkomusic.downloadagent.domain.MusicSourcePort;
 import com.sashkomusic.downloadagent.domain.exception.MusicDownloadException;
@@ -16,6 +17,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -25,8 +28,10 @@ public class QobuzClient implements MusicSourcePort {
 
     private final RestClient restClient;
     private final QobuzCommandExecutor commandExecutor;
-    private final QobuzQualityMapper qualityMapper;
     private final DownloadMonitorService monitorService;
+    private final ActiveDownloadRegistry downloadRegistry;
+
+    private final ConcurrentHashMap<String, CompletableFuture<Process>> activeProcesses = new ConcurrentHashMap<>();
 
     @Value("${qobuz.cli-path:/usr/local/bin/qobuz-dl}")
     private String cliPath;
@@ -39,15 +44,15 @@ public class QobuzClient implements MusicSourcePort {
 
     public QobuzClient(RestClient.Builder restClientBuilder,
                        QobuzCommandExecutor commandExecutor,
-                       QobuzQualityMapper qualityMapper,
-                       DownloadMonitorService monitorService) {
+                       DownloadMonitorService monitorService,
+                       ActiveDownloadRegistry downloadRegistry) {
         this.restClient = restClientBuilder
                 .baseUrl("https://www.qobuz.com")
                 .defaultHeader("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
                 .build();
         this.commandExecutor = commandExecutor;
-        this.qualityMapper = qualityMapper;
         this.monitorService = monitorService;
+        this.downloadRegistry = downloadRegistry;
     }
 
     @Override
@@ -101,7 +106,7 @@ public class QobuzClient implements MusicSourcePort {
     }
 
     @Override
-    public String initiateDownload(DownloadOption option) {
+    public String initiateDownload(DownloadOption option, String releaseId) {
         String albumUrl = option.technicalMetadata().get("albumUrl");
         String quality = option.technicalMetadata().get("quality");
 
@@ -109,28 +114,31 @@ public class QobuzClient implements MusicSourcePort {
             throw new MusicDownloadException("Missing Qobuz metadata: albumUrl or quality");
         }
 
-        log.info("Initiating Qobuz download: url={}, quality={}", albumUrl, quality);
+        log.info("Initiating Qobuz download: url={}, quality={}, releaseId={}", albumUrl, quality, releaseId);
 
         try {
-            // Execute: qobuz-dl dl <url> -q <quality> -d <downloadPath>
-            QobuzCommandExecutor.CommandResult result = commandExecutor.execute(
-                    120, // 2 minutes timeout
+            CompletableFuture<Process> futureProcess = commandExecutor.executeAsync(
                     cliPath, "dl", albumUrl, "-q", quality, "-d", downloadPath, "--no-db"
             );
 
-            if (!result.success()) {
-                log.error("Qobuz download failed: {}", result.error());
-                throw new MusicDownloadException("не вийшло скачати з Qobuz: " + result.error());
-            }
+            activeProcesses.put(releaseId, futureProcess);
 
-            log.info("Qobuz download completed successfully");
+            downloadRegistry.registerCancelHandle(releaseId, () -> {
+                Process process = futureProcess.getNow(null);
+                if (process != null && process.isAlive()) {
+                    process.destroyForcibly();
+                    log.info("Forcibly killed Qobuz download process for releaseId={}", releaseId);
+                }
+                activeProcesses.remove(releaseId);
+                monitorService.stopMonitoring(releaseId);
+            });
+
+            log.info("Qobuz download started in background");
 
             // Return album ID as batch ID
             String batchId = option.technicalMetadata().get("albumId");
             return batchId != null ? batchId : option.id();
 
-        } catch (MusicDownloadException e) {
-            throw e;
         } catch (Exception e) {
             log.error("Error initiating Qobuz download: {}", e.getMessage(), e);
             throw new MusicDownloadException("не вийшло розпочати скачування з Qobuz: " + e.getMessage(), e);
@@ -316,7 +324,7 @@ public class QobuzClient implements MusicSourcePort {
 
     private DownloadOption createOption(QobuzSearchResult album, int quality) {
         String optionId = "qobuz-" + album.albumId() + "-q" + quality;
-        String qualityLabel = qualityMapper.getQualityLabel(quality);
+        String qualityLabel = getQualityLabel(quality);
         String displayName = album.artist() + " - " + album.title() + " - " + qualityLabel;
 
         // No size/length estimation - will be known after download
@@ -369,5 +377,20 @@ public class QobuzClient implements MusicSourcePort {
         );
 
         log.info("Started monitoring for Qobuz download: {}", downloadPath);
+    }
+
+    @Override
+    public void cancelDownload(String releaseId) {
+        downloadRegistry.cancel(releaseId);
+    }
+
+    public String getQualityLabel(int qualityCode) {
+        return switch (qualityCode) {
+            case 5 -> "MP3 320kbps";
+            case 6 -> "FLAC 16bit/44.1kHz";
+            case 7 -> "FLAC 24bit/96kHz (Hi-Res)";
+            case 27 -> "FLAC Maximum Quality";
+            default -> "Quality " + qualityCode;
+        };
     }
 }

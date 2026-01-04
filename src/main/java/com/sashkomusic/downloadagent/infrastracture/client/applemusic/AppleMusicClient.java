@@ -1,29 +1,32 @@
 package com.sashkomusic.downloadagent.infrastracture.client.applemusic;
 
+import com.sashkomusic.downloadagent.domain.ActiveDownloadRegistry;
 import com.sashkomusic.downloadagent.domain.DownloadMonitorService;
 import com.sashkomusic.downloadagent.domain.MusicSourcePort;
 import com.sashkomusic.downloadagent.domain.exception.MusicDownloadException;
 import com.sashkomusic.downloadagent.domain.model.DownloadEngine;
 import com.sashkomusic.downloadagent.domain.model.DownloadOption;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class AppleMusicClient implements MusicSourcePort {
 
     private final ITunesSearchClient searchClient;
     private final DownloadMonitorService monitorService;
+    private final ActiveDownloadRegistry downloadRegistry;
+    private final AppleMusicCommandExecutor commandExecutor;
+
+    private final ConcurrentHashMap<String, CompletableFuture<Process>> activeProcesses = new ConcurrentHashMap<>();
 
     @Value("${applemusic.gamdl.path}")
     private String gamdlPath;
@@ -33,6 +36,16 @@ public class AppleMusicClient implements MusicSourcePort {
 
     @Value("${applemusic.gamdl.output}")
     private String outputPath;
+
+    public AppleMusicClient(ITunesSearchClient searchClient,
+                            DownloadMonitorService monitorService,
+                            ActiveDownloadRegistry downloadRegistry,
+                            AppleMusicCommandExecutor commandExecutor) {
+        this.searchClient = searchClient;
+        this.monitorService = monitorService;
+        this.downloadRegistry = downloadRegistry;
+        this.commandExecutor = commandExecutor;
+    }
 
     @Override
     public boolean autoDownloadEnabled() {
@@ -64,43 +77,25 @@ public class AppleMusicClient implements MusicSourcePort {
     }
 
     @Override
-    public String initiateDownload(DownloadOption option) {
+    public String initiateDownload(DownloadOption option, String releaseId) {
         String url = option.technicalMetadata().get("url");
 
         if (url == null) {
             throw new MusicDownloadException("Missing Apple Music URL in metadata");
         }
 
-        log.info("Initiating Apple Music download: url={}", url);
+        log.info("Initiating Apple Music download: url={}, releaseId={}", url, releaseId);
 
         try {
-            executeGamdlDownload(url);
-            log.info("Apple Music download completed successfully");
-
-            String batchId = option.technicalMetadata().get("albumId");
-            return batchId != null ? batchId : option.id();
-
-        } catch (Exception e) {
-            log.error("Error downloading from Apple Music: {}", e.getMessage(), e);
-            throw new MusicDownloadException("не вийшло скачати з Apple Music: " + e.getMessage(), e);
-        }
-    }
-
-    private void executeGamdlDownload(String url) {
-        try {
-            log.info("Starting Apple Music download with gamdl: url={}", url);
-
             if (!Files.exists(Path.of(gamdlPath))) {
-                log.error("gamdl executable not found: {}", gamdlPath);
                 throw new MusicDownloadException("gamdl executable not found: " + gamdlPath);
             }
 
             if (!Files.exists(Path.of(cookiesPath))) {
-                log.error("Cookies file not found: {}", cookiesPath);
                 throw new MusicDownloadException("Cookies file not found: " + cookiesPath);
             }
 
-            ProcessBuilder processBuilder = new ProcessBuilder(
+            CompletableFuture<Process> futureProcess = commandExecutor.executeAsync(
                     gamdlPath,
                     url,
                     "--cookies-path", cookiesPath,
@@ -109,33 +104,26 @@ public class AppleMusicClient implements MusicSourcePort {
                     "--song-codec", "aac-legacy"
             );
 
-            processBuilder.redirectErrorStream(true);
+            activeProcesses.put(releaseId, futureProcess);
 
-            log.info("Executing command: {}", String.join(" ", processBuilder.command()));
-
-            Process process = processBuilder.start();
-
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    log.info("[gamdl] {}", line);
+            downloadRegistry.registerCancelHandle(releaseId, () -> {
+                Process process = futureProcess.getNow(null);
+                if (process != null && process.isAlive()) {
+                    process.destroyForcibly();
+                    log.info("Forcibly killed Apple Music download process for releaseId={}", releaseId);
                 }
-            }
+                activeProcesses.remove(releaseId);
+                monitorService.stopMonitoring(releaseId);
+            });
 
-            int exitCode = process.waitFor();
+            log.info("Apple Music download started in background");
 
-            if (exitCode != 0) {
-                log.error("Apple Music download failed with exit code {}", exitCode);
-                throw new MusicDownloadException("Apple Music download failed with exit code: " + exitCode);
-            }
+            String batchId = option.technicalMetadata().get("albumId");
+            return batchId != null ? batchId : option.id();
 
-            log.info("gamdl completed successfully");
-
-        } catch (MusicDownloadException e) {
-            throw e;
         } catch (Exception e) {
-            log.error("Error executing gamdl: {}", e.getMessage(), e);
-            throw new MusicDownloadException("Error downloading from Apple Music: " + e.getMessage(), e);
+            log.error("Error downloading from Apple Music: {}", e.getMessage(), e);
+            throw new MusicDownloadException("не вийшло скачати з Apple Music: " + e.getMessage(), e);
         }
     }
 
@@ -180,5 +168,10 @@ public class AppleMusicClient implements MusicSourcePort {
                 files,
                 metadata
         );
+    }
+
+    @Override
+    public void cancelDownload(String releaseId) {
+        downloadRegistry.cancel(releaseId);
     }
 }

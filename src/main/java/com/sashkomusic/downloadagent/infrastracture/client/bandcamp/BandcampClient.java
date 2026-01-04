@@ -1,34 +1,47 @@
 package com.sashkomusic.downloadagent.infrastracture.client.bandcamp;
 
+import com.sashkomusic.downloadagent.domain.ActiveDownloadRegistry;
 import com.sashkomusic.downloadagent.domain.DownloadMonitorService;
 import com.sashkomusic.downloadagent.domain.MusicSourcePort;
 import com.sashkomusic.downloadagent.domain.exception.MusicDownloadException;
 import com.sashkomusic.downloadagent.domain.model.DownloadEngine;
 import com.sashkomusic.downloadagent.domain.model.DownloadOption;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class BandcampClient implements MusicSourcePort {
 
     private final BandcampSearchClient searchClient;
     private final DownloadMonitorService monitorService;
+    private final ActiveDownloadRegistry downloadRegistry;
+    private final BandcampCommandExecutor commandExecutor;
+
+    private final ConcurrentHashMap<String, CompletableFuture<Process>> activeProcesses = new ConcurrentHashMap<>();
 
     @Value("${bandcamp.cli-path}")
     private String bandcampDlPath;
 
     @Value("${bandcamp.download-path}")
     private String outputPath;
+
+    public BandcampClient(BandcampSearchClient searchClient,
+                          DownloadMonitorService monitorService,
+                          ActiveDownloadRegistry downloadRegistry,
+                          BandcampCommandExecutor commandExecutor) {
+        this.searchClient = searchClient;
+        this.monitorService = monitorService;
+        this.downloadRegistry = downloadRegistry;
+        this.commandExecutor = commandExecutor;
+    }
 
     @Override
     public boolean autoDownloadEnabled() {
@@ -60,70 +73,46 @@ public class BandcampClient implements MusicSourcePort {
     }
 
     @Override
-    public String initiateDownload(DownloadOption option) {
+    public String initiateDownload(DownloadOption option, String releaseId) {
         String url = option.technicalMetadata().get("url");
 
         if (url == null) {
             throw new MusicDownloadException("Missing Bandcamp URL in metadata");
         }
 
-        log.info("Initiating Bandcamp download: url={}", url);
+        log.info("Initiating Bandcamp download: url={}, releaseId={}", url, releaseId);
 
         try {
-            executeBandcampDl(url);
-            log.info("Bandcamp download completed successfully");
-
-            return option.id();
-
-        } catch (Exception e) {
-            log.error("Error downloading from Bandcamp: {}", e.getMessage(), e);
-            throw new MusicDownloadException("не вийшло скачати з Bandcamp: " + e.getMessage(), e);
-        }
-    }
-
-    private void executeBandcampDl(String url) {
-        try {
-            log.info("Starting Bandcamp download with bandcamp-dl: url={}", url);
-
             if (!Files.exists(Path.of(bandcampDlPath))) {
-                log.error("bandcamp-dl executable not found: {}", bandcampDlPath);
                 throw new MusicDownloadException("bandcamp-dl executable not found: " + bandcampDlPath);
             }
 
-            ProcessBuilder processBuilder = new ProcessBuilder(
+            CompletableFuture<Process> futureProcess = commandExecutor.executeAsync(
                     bandcampDlPath,
                     url,
                     "--base-dir", outputPath,
                     "--template", "%{artist}/%{album}/%{track} - %{title}"
             );
 
-            processBuilder.redirectErrorStream(true);
+            activeProcesses.put(releaseId, futureProcess);
 
-            log.info("Executing command: {}", String.join(" ", processBuilder.command()));
-
-            Process process = processBuilder.start();
-
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    log.info("[bandcamp-dl] {}", line);
+            downloadRegistry.registerCancelHandle(releaseId, () -> {
+                Process process = futureProcess.getNow(null);
+                if (process != null && process.isAlive()) {
+                    process.destroyForcibly();
+                    log.info("Forcibly killed Bandcamp download process for releaseId={}", releaseId);
                 }
-            }
+                activeProcesses.remove(releaseId);
+                monitorService.stopMonitoring(releaseId);
+            });
 
-            int exitCode = process.waitFor();
+            log.info("Bandcamp download started in background");
 
-            if (exitCode != 0) {
-                log.error("Bandcamp download failed with exit code {}", exitCode);
-                throw new MusicDownloadException("Bandcamp download failed with exit code: " + exitCode);
-            }
+            return option.id();
 
-            log.info("bandcamp-dl completed successfully");
-
-        } catch (MusicDownloadException e) {
-            throw e;
         } catch (Exception e) {
-            log.error("Error executing bandcamp-dl: {}", e.getMessage(), e);
-            throw new MusicDownloadException("Error downloading from Bandcamp: " + e.getMessage(), e);
+            log.error("Error downloading from Bandcamp: {}", e.getMessage(), e);
+            throw new MusicDownloadException("не вийшло скачати з Bandcamp: " + e.getMessage(), e);
         }
     }
 
@@ -168,5 +157,10 @@ public class BandcampClient implements MusicSourcePort {
                 files,
                 metadata
         );
+    }
+
+    @Override
+    public void cancelDownload(String releaseId) {
+        downloadRegistry.cancel(releaseId);
     }
 }

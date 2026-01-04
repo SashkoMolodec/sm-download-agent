@@ -1,6 +1,7 @@
 package com.sashkomusic.downloadagent.infrastracture.client.slskd;
 
 import com.sashkomusic.downloadagent.config.SlskdPathConfig;
+import com.sashkomusic.downloadagent.domain.ActiveDownloadRegistry;
 import com.sashkomusic.downloadagent.domain.MusicSourcePort;
 import com.sashkomusic.downloadagent.domain.exception.MusicDownloadException;
 import com.sashkomusic.downloadagent.domain.model.DownloadEngine;
@@ -21,6 +22,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -35,15 +37,20 @@ public class SlskdClient implements MusicSourcePort {
     private final RestClient client;
     private final String apiKey;
     private final SlskdPathConfig pathConfig;
+    private final ActiveDownloadRegistry downloadRegistry;
+
+    private final ConcurrentHashMap<String, List<String>> transferIds = new ConcurrentHashMap<>();
 
     public SlskdClient(RestClient.Builder builder,
                        @Value("${slskd.api-key:}") String apiKey,
                        @Value("${slskd.base-url:http://localhost:5030}") String baseUrl,
-                       SlskdPathConfig pathConfig) {
+                       SlskdPathConfig pathConfig,
+                       ActiveDownloadRegistry downloadRegistry) {
         log.info("Initializing SlskdClient with base URL: {}", baseUrl);
         this.client = builder.baseUrl(baseUrl).build();
         this.apiKey = apiKey;
         this.pathConfig = pathConfig;
+        this.downloadRegistry = downloadRegistry;
     }
 
     @Override
@@ -252,7 +259,7 @@ public class SlskdClient implements MusicSourcePort {
     @Override
     @CircuitBreaker(name = "slskdClient", fallbackMethod = "initiateDownloadFallback")
     @Retry(name = "slskdClient")
-    public String initiateDownload(DownloadOption option) {
+    public String initiateDownload(DownloadOption option, String releaseId) {
         String username = option.technicalMetadata().get("username");
 
         if (username == null) {
@@ -260,7 +267,7 @@ public class SlskdClient implements MusicSourcePort {
             throw new MusicDownloadException("трохи даних бракує для запиту шоби скачати музло");
         }
 
-        log.info("Attempting download from user={}, files={}", username, option.files().size());
+        log.info("Attempting download from user={}, files={}, releaseId={}", username, option.files().size(), releaseId);
 
         List<Map<String, Object>> files = option.files().stream()
                 .map(f -> Map.<String, Object>of(
@@ -289,6 +296,14 @@ public class SlskdClient implements MusicSourcePort {
             log.info("Download initiated for username={}, enqueued {} files",
                     username, response.enqueued().size());
 
+            List<String> ids = response.enqueued().stream()
+                    .map(SlskdDownloadResponse.EnqueuedDownload::id)
+                    .toList();
+            transferIds.put(releaseId, ids);
+            log.debug("Stored {} transfer IDs for releaseId={}", ids.size(), releaseId);
+
+            downloadRegistry.registerCancelHandle(releaseId, () -> cancelSlskdTransfers(releaseId));
+
             String batchId = response.enqueued().getFirst().id();
             log.info("Batch ID: {}", batchId);
 
@@ -302,10 +317,27 @@ public class SlskdClient implements MusicSourcePort {
         }
     }
 
-    private String initiateDownloadFallback(DownloadOption option, Exception e) {
-        String username = option.technicalMetadata().get("username");
-        log.warn("Slskd initiateDownload fallback triggered for username={}: {}", username, e.getMessage());
-        throw new MusicDownloadException("не вийшло скачати після кількох спроб: " + e.getMessage(), e);
+    private void cancelSlskdTransfers(String releaseId) {
+        List<String> ids = transferIds.remove(releaseId);
+        if (ids != null) {
+            for (String transferId : ids) {
+                try {
+                    client.delete()
+                            .uri("/api/v0/transfers/" + transferId)
+                            .header("X-API-KEY", apiKey)
+                            .retrieve()
+                            .toBodilessEntity();
+                    log.info("Cancelled Slskd transfer: {}", transferId);
+                } catch (Exception e) {
+                    log.error("Failed to cancel transfer {}: {}", transferId, e.getMessage());
+                }
+            }
+        }
+    }
+
+    @Override
+    public void cancelDownload(String releaseId) {
+        downloadRegistry.cancel(releaseId);
     }
 
     @Override
